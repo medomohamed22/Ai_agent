@@ -7,7 +7,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function generateProject(input) {
-  const prompt = `أنت فريق كامل لبناء المواقع. أنشئ موقعًا إنتاجيًا متجاوبًا حسب الوصف والإجابات.\nالوصف: ${input.description}\nالمميزات المختارة: ${JSON.stringify(input.selectedIdeas || input.answers)}\nاللغة: ${input.language}\nالقيود الإلزامية: الواجهة كلها في ملف index.html واحد يحتوي HTML وCSS وJavaScript داخليًا. لا تستخدم مكتبات خارجية إلا خطوط Google اختيارية. الباك إند JavaScript فقط وبحد أقصى 12 ملف API، لكن لهذا الموقع المولد استخدم ملف api/data.js فقط عند الحاجة. صمم Mobile First مع RTL عند العربية. أرجع JSON فقط: {"name":"english-kebab-name","plan":["..."],"requiresDatabase":true,"indexHtml":"full html","apiDataJs":"full serverless function or empty string","migrationSql":"SQL or empty","smokePath":"/"}. يجب أن يكون indexHtml كاملًا ويعمل. عند وجود قاعدة بيانات استخدم متغيرات NEXT_PUBLIC_SUPABASE_URL وNEXT_PUBLIC_SUPABASE_ANON_KEY في الواجهة، واجعل SQL يشمل grants وRLS آمنة.`;
+  const prompt = `أنت فريق كامل لبناء المواقع. أنشئ موقعًا إنتاجيًا متجاوبًا حسب الوصف والإجابات.\nالوصف: ${input.description}\nالمميزات المختارة: ${JSON.stringify(input.selectedIdeas || input.answers)}\nاللغة: ${input.language}\nالقيود الإلزامية: الواجهة كلها في ملف index.html واحد يحتوي HTML وCSS وJavaScript داخليًا. لا تستخدم مكتبات خارجية إلا خطوط Google اختيارية. الباك إند JavaScript فقط وبحد أقصى 12 ملف API، لكن لهذا الموقع المولد استخدم ملف api/data.js فقط عند الحاجة. صمم Mobile First مع RTL عند العربية. أنشئ تجربة متعددة الصفحات باستخدام أقسام/مسارات hash واضحة للرئيسية ومن نحن والخدمات والأسعار والأسئلة الشائعة والتواصل، مع تنقل يعمل دون إعادة تحميل. أرجع JSON فقط: {"name":"english-kebab-name","plan":["..."],"requiresDatabase":true,"indexHtml":"full html","apiDataJs":"full serverless function or empty string","migrationSql":"SQL or empty","smokePath":"/"}. يجب أن يكون indexHtml كاملًا ويعمل. عند وجود قاعدة بيانات استخدم متغيرات NEXT_PUBLIC_SUPABASE_URL وNEXT_PUBLIC_SUPABASE_ANON_KEY في الواجهة، واجعل SQL يشمل grants وRLS آمنة.`;
   const response = await ai.models.generateContent({ model: process.env.GEMINI_MODEL || 'gemini-3.5-flash', contents: prompt, config: { responseMimeType: 'application/json' } });
   return extractJson(response.text);
 }
@@ -85,6 +85,6 @@ export default async function handler(req, res) {
       try { const r = await fetch(url, { redirect: 'follow' }); if (r.ok) { ok = true; break; } } catch {}
     }
     if (!ok) throw new Error('تم إرسال النشر لكن اختبار الرابط لم ينجح بعد');
-    json(res, 200, { demo: false, plan: generated.plan, url, supabaseProjectRef: sb?.id || null, checks: ['تم تحليل المتطلبات', 'تم إنشاء الخطة', 'تم توليد الموقع', ...(sb ? ['تم إنشاء قاعدة البيانات وتطبيق SQL'] : []), 'تم النشر على Vercel', 'نجح اختبار الرابط النهائي'] });
+    json(res, 200, { demo: false, plan: generated.plan, generatedHtml: generated.indexHtml, url, supabaseProjectRef: sb?.id || null, checks: ['تم تحليل المتطلبات', 'تم إنشاء الخطة', 'تم توليد الموقع', ...(sb ? ['تم إنشاء قاعدة البيانات وتطبيق SQL'] : []), 'تم النشر على Vercel', 'نجح اختبار الرابط النهائي'] });
   } catch (error) { json(res, 500, { error: error.message }); }
 }
