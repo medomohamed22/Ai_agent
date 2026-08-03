@@ -1,0 +1,17 @@
+{
+  "name": "nashr-ai-builder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "@google/genai": "^1.16.0",
+    "postgres": "^3.4.7"
+  },
+  "devDependencies": {
+    "vercel": "^47.0.0"
+  }
+}
