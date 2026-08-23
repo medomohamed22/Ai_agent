@@ -179,6 +179,57 @@ summary{cursor:pointer;font-weight:900;font-size:12px}
   .stage{grid-template-columns:38px 1fr auto;padding:11px}.stage-icon{width:38px;height:38px}
   .result-headline{align-items:flex-start;flex-direction:column}.score-row{grid-template-columns:95px 1fr 32px}
 }
+
+/* ---- 2026 mobile overflow hardening ---- */
+html,body{width:100%;max-width:100%;overflow-x:hidden}
+main,.wrap,.workspace,.card,.pipeline,.results,.panel,.output-card,.product-box,.product-meta,.idea,.scene,.score-wrap,.modal-card{
+  min-width:0;max-width:100%;
+}
+.workspace>*{min-width:0}
+.card,.output-card,.idea,.scene,.product-meta,.panel{overflow:hidden}
+.product-meta h3,.product-meta p,.output,.idea p,.scene p,.tiny,.help,.status-line span,details,summary{
+  overflow-wrap:anywhere;word-break:break-word;max-width:100%;
+}
+.output{
+  white-space:pre-wrap;
+  overflow-x:hidden;
+  word-break:break-word;
+  overflow-wrap:anywhere;
+}
+.output.en{
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+input,textarea,select,button{min-width:0;max-width:100%}
+select{
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  overflow:hidden;
+}
+.product-box{width:100%}
+.preview{min-width:0}
+.preview img{max-width:100%;display:block}
+.chips{max-width:100%;overflow:hidden}
+.chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.competitors,.comp-row,.grid2,.grid3,.cards-grid{min-width:0;max-width:100%}
+.comp-row>*{min-width:0}
+.stage{min-width:0;width:100%}
+.stage>div:nth-child(2){min-width:0}
+.stage b,.stage span{overflow-wrap:anywhere;word-break:break-word}
+.tabs{max-width:100%;overscroll-behavior-inline:contain}
+@media(max-width:650px){
+  .workspace{display:block;width:100%}
+  .workspace>section,.workspace>aside{width:100%;min-width:0}
+  .card{width:100%;max-width:100%;overflow:hidden}
+  .product-box{grid-template-columns:82px minmax(0,1fr)}
+  .product-meta{min-width:0}
+  .output{font-size:12px;line-height:1.7}
+  .modal-card{width:calc(100vw - 20px);max-width:calc(100vw - 20px);padding:16px}
+  .grid2,.grid3,.cards-grid{grid-template-columns:minmax(0,1fr)}
+  .comp-row{grid-template-columns:minmax(0,1fr) auto}
+}
+
 </style>
 </head>
 <body>
@@ -369,7 +420,7 @@ summary{cursor:pointer;font-weight:900;font-size:12px}
       <div class="field"><label>الرؤية المحلية</label><select id="visionMode"><option value="auto">تلقائي — SmolVLM ثم fallback</option><option value="smolvlm">SmolVLM فقط</option><option value="stable">محرك ثابت</option><option value="caption">Caption خفيف</option></select></div>
     </div>
 
-    <div class="field"><label>نموذج OpenCode المجاني</label><div class="grid2"><select id="modelSelect"><option value="">اضغط تحديث</option></select><button class="btn btn-soft" id="refreshModels">↻ تحديث النماذج</button></div><div class="tiny" id="modelStatus" style="margin-top:7px">لم يتم التحميل.</div></div>
+    <div class="field"><label>نموذج OpenCode المجاني</label><div class="grid2"><select id="modelSelect"><option value="">اضغط تحديث</option></select><button class="btn btn-soft" id="refreshModels">↻ تحديث من OpenCode</button></div><div class="tiny" id="modelStatus" style="margin-top:7px">القائمة تُقرأ مباشرة من endpoint الرسمي عند كل تحديث.</div></div>
 
     <div class="help">OpenCode المجاني يعمل بدون API Key. Exa/Jina يمران عبر Vercel Functions. الرؤية تعمل محليًا داخل جهازك والصورة تمر عبر Image Proxy لتجنب CORS.</div>
     <div class="sep"></div>
@@ -434,23 +485,82 @@ async function saveSettings(){
   await dbSet("kv","settings",settings);els.settingsModal.classList.remove("show");toast("تم حفظ الإعدادات");
 }
 
-const FREE_FALLBACK_MODELS=[
-  {id:"big-pickle",name:"Big Pickle — Free"},{id:"deepseek-v4-flash-free",name:"DeepSeek V4 Flash — Free"},
-  {id:"mimo-v2.5-free",name:"MiMo V2.5 — Free"},{id:"nemotron-3-ultra-free",name:"Nemotron 3 Ultra — Free"},
-  {id:"kimi-k2.5-free",name:"Kimi K2.5 — Free"}
-];
-const KNOWN_FREE=new Set(FREE_FALLBACK_MODELS.map(x=>x.id));
-function isFreeModel(m){const id=(m.id||m.model||"").toLowerCase(),n=(m.name||"").toLowerCase();if(id.includes("free")||n.includes("free")||KNOWN_FREE.has(id))return true;const p=m.pricing||{};const v=Object.values(p).map(Number).filter(Number.isFinite);return v.length&&v.every(x=>x===0)}
+const ALWAYS_FREE_IDS=new Set(["big-pickle"]);
+
+function isFreeModel(m){
+  const id=String(m.id||m.model||"").toLowerCase();
+  const name=String(m.name||m.display_name||"").toLowerCase();
+
+  // Official naming used by many OpenCode free models.
+  if(id.endsWith("-free") || id.includes("-free-") || name.includes(" free")) return true;
+
+  // Official free alias that does not carry "-free" in the ID.
+  if(ALWAYS_FREE_IDS.has(id)) return true;
+
+  // Prefer explicit live metadata from the official models endpoint when present.
+  if(m.free===true || m.is_free===true || m.isFree===true) return true;
+  const pricing=m.pricing||m.price||m.cost||null;
+  if(pricing && typeof pricing==="object"){
+    const vals=Object.values(pricing)
+      .filter(v=>v!==null && v!==undefined && v!=="")
+      .map(v=>Number(v))
+      .filter(Number.isFinite);
+    if(vals.length && vals.every(v=>v===0)) return true;
+  }
+  return false;
+}
+
 async function refreshModels(){
-  els.modelStatus.textContent="جارٍ جلب النماذج...";
+  els.modelStatus.textContent="جارٍ قراءة قائمة OpenCode الرسمية الحية...";
+  els.modelSelect.disabled=true;
+
   try{
-    const r=await fetch("/api/opencode?action=models");const raw=await r.text();let j;try{j=JSON.parse(raw)}catch{j={}}
-    if(!r.ok)throw new Error(`HTTP ${r.status}`);
-    const all=Array.isArray(j)?j:(j.data||j.models||[]);let free=all.filter(isFreeModel);if(!free.length)free=FREE_FALLBACK_MODELS;
+    // Cache-busting is intentional: every click should discover newly-added models.
+    const r=await fetch(`/api/opencode?action=models&t=${Date.now()}`,{
+      method:"GET",
+      headers:{"Accept":"application/json","Cache-Control":"no-cache"},
+      cache:"no-store"
+    });
+
+    const raw=await r.text();
+    let j;
+    try{j=JSON.parse(raw)}catch{j={error:raw}}
+
+    if(!r.ok){
+      throw new Error(`OpenCode Models HTTP ${r.status}: ${j.error?.message||j.error||raw.slice(0,260)}`);
+    }
+
+    const all=Array.isArray(j) ? j : (j.data||j.models||[]);
+    if(!Array.isArray(all) || !all.length){
+      throw new Error("OpenCode لم يُرجع قائمة نماذج قابلة للقراءة.");
+    }
+
+    const free=all.filter(isFreeModel);
+    if(!free.length){
+      els.modelSelect.innerHTML='<option value="">لا توجد نماذج مجانية معلَّمة حاليًا</option>';
+      els.modelStatus.textContent=`تم جلب ${all.length} نموذج من OpenCode رسميًا، لكن لم يُعلَّم أي منها كمجاني في البيانات الحالية.`;
+      return;
+    }
+
     const prev=(await dbGet("kv","lastModel"))||"";
-    els.modelSelect.innerHTML=free.map(m=>`<option value="${escapeHtml(m.id||m.model)}" ${(m.id||m.model)===prev?"selected":""}>${escapeHtml(m.name||m.id||m.model)}</option>`).join("");
-    els.modelStatus.textContent=`تم تحميل ${free.length} نموذج مجاني.`;
-  }catch(e){els.modelSelect.innerHTML=FREE_FALLBACK_MODELS.map(m=>`<option value="${m.id}">${m.name}</option>`).join("");els.modelStatus.textContent="تم استخدام القائمة الاحتياطية."}
+    els.modelSelect.innerHTML=free.map(m=>{
+      const id=m.id||m.model;
+      const nm=m.name||m.display_name||id;
+      return `<option value="${escapeHtml(id)}" ${id===prev?"selected":""}>${escapeHtml(nm)} — ${escapeHtml(id)}</option>`;
+    }).join("");
+
+    // If the previously-selected model disappeared, select the first current free model.
+    if(!els.modelSelect.value && free[0]){
+      els.modelSelect.value=free[0].id||free[0].model;
+    }
+
+    els.modelStatus.textContent=`✓ قائمة رسمية مباشرة: ${free.length} نموذج مجاني من أصل ${all.length}. آخر تحديث: ${new Date().toLocaleTimeString("ar-EG")}`;
+  }catch(e){
+    els.modelSelect.innerHTML='<option value="">تعذر تحميل النماذج</option>';
+    els.modelStatus.textContent="فشل جلب القائمة الرسمية: "+(e.message||e);
+  }finally{
+    els.modelSelect.disabled=false;
+  }
 }
 
 async function exaRequest(endpoint,body){
@@ -506,34 +616,23 @@ async function gatherCompetitors(urls){
   return out
 }
 
-function renderProduct(p){currentProduct=p;els.productTitle.textContent=p.title;const t=(p.text||"").replace(/\s+/g," ").trim();els.productDesc.textContent=t.slice(0,260)+(t.length>260?"…":"");els.preview.innerHTML=p.image?`<img src="${proxyImage(p.image)}" alt="">`:"<span>لا توجد صورة</span>";els.chips.innerHTML=`<span class="chip">${p.provider}</span>${p.image?'<span class="chip">صورة متاحة</span>':''}<span class="chip">${p.searchResults?.length||0} نتائج</span>`}
+function renderProduct(p){
+  currentProduct=p;
+  els.productTitle.textContent=p.title||"منتج";
+  const t=(p.text||"").replace(/\s+/g," ").trim();
+  els.productDesc.textContent=t.slice(0,360)+(t.length>360?"…":"");
+  els.productDesc.title=t.slice(0,1500);
 
-function buildContext(p,vision,competitors){
-  return `PRODUCT URL:
-${p.url}
+  els.preview.innerHTML=p.image
+    ? `<img src="${proxyImage(p.image)}" alt="صورة المنتج" loading="lazy">`
+    : "<span>لا توجد صورة</span>";
 
-PRODUCT TITLE:
-${p.title}
-
-PRODUCT PAGE DATA:
-${p.text}
-
-LOCAL VISION:
-${vision}
-
-COMPETITORS:
-${competitors.map((x,i)=>`#${i+1} ${x.title||x.url}\n${x.error||x.text||""}`).join("\n\n")||"None"}
-
-CAMPAIGN SETTINGS:
-Platform: ${els.platform.value}
-Ad type: ${els.adType.value}
-Image model: ${els.imageModel.value}
-Video model: ${els.videoModel.value}
-Variation count: ${els.variationCount.value}
-User brief: ${els.brief.value.trim()||"None"}
-
-RULES:
-Use only supported product facts. Never invent claims, specifications, certifications, prices or readable packaging text. Preserve real product geometry, branding and visual identity.`;
+  const count=Array.isArray(p.searchResults)?p.searchResults.length:0;
+  els.chips.innerHTML=[
+    `<span class="chip">${escapeHtml(p.provider||"بحث")}</span>`,
+    p.image?'<span class="chip">صورة متاحة</span>':"",
+    `<span class="chip">${count} نتائج</span>`
+  ].join("");
 }
 
 async function callCreativeAI(context){
@@ -599,7 +698,7 @@ async function run(){
     setStage("competitors","active");setStatus(compUrls.length?"تحليل المنافسين...":"لا توجد روابط منافسين — تخطي المرحلة.");
     const comps=compUrls.length?await gatherCompetitors(compUrls):[];setStage("competitors","done");
 
-    const context=buildContext(product,vision,comps);els.rawContext.textContent=context;
+    const context=buildContext(product,vision,comps);els.rawContext.textContent=context.slice(0,50000);
 
     setStage("strategy","active");setStatus("بناء الزوايا والـHooks والاستراتيجية...");
     setTimeout(()=>{},100);
