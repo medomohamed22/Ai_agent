@@ -213,11 +213,11 @@
         <div class="tiny" style="line-height:2">
           ① يقرأ صفحة المنتج مباشرة عبر Exa Contents أو Jina Reader.<br>
           ② إذا احتاج تفاصيل إضافية يستخدم Exa Search أو Jina Search كـ fallback.<br>
-          ③ يحلل الصورة محليًا عبر Transformers.js: وصف + عناصر + ألوان، بدون Vision API.<br>
+          ③ يحلل الصورة عبر SmolVLM محليًا؛ وإذا تعذر WebGPU يستخدم محركًا احتياطيًا ثابتًا للوصف والعناصر والألوان.<br>
           ④ يدمج النص + الوصف البصري + ملاحظاتك في سياق واحد.<br>
           ⑤ يطلب من OpenCode إخراج برومبت صورة وفيديو بصيغة منظمة.
         </div>
-        <div class="help">OpenCode المجاني لا يحتاج مفتاح API. الاتصالات الخارجية تمر الآن عبر Vercel Functions من نفس الدومين، لذلك لا تعتمد على CORS في المتصفح. أداة الرؤية تعمل محليًا داخل المتصفح عبر Transformers.js ولا ترسل الصورة إلى Vision API خارجي.</div>
+        <div class="help">OpenCode المجاني لا يحتاج مفتاح API. الاتصالات الخارجية وصورة المنتج تمر عبر Vercel Functions من نفس الدومين لتجنب CORS. الرؤية القوية تعمل محليًا ولا تحتاج مفتاح API. أداة الرؤية تعمل محليًا داخل المتصفح عبر Transformers.js ولا ترسل الصورة إلى Vision API خارجي.</div>
       </section>
     </aside>
   </div>
@@ -261,11 +261,13 @@
     <div class="field">
       <label>محرك الرؤية</label>
       <select id="visionMode">
-        <option value="full">دقيق — وصف + اكتشاف عناصر + تحليل ألوان</option>
-        <option value="caption">خفيف — وصف الصورة فقط</option>
+        <option value="auto">تلقائي — SmolVLM القوي ثم fallback ثابت</option>
+        <option value="smolvlm">SmolVLM 256M — فهم بصري متقدم (يفضل WebGPU)</option>
+        <option value="stable">محرك ثابت — Caption + Objects + Colors</option>
+        <option value="caption">خفيف — Caption فقط</option>
       </select>
     </div>
-    <div class="help">يستخدم Transformers.js داخل المتصفح. في أول تشغيل سيتم تنزيل نماذج الرؤية المجانية من Hugging Face ثم يحتفظ المتصفح بها في الكاش. لا يوجد مفتاح Vision API.</div>
+    <div class="help">الوضع التلقائي يجرب SmolVLM-256M لفهم الصورة بشكل أعمق، ثم يرجع لمحرك ثابت أخف إذا كان الجهاز لا يدعم WebGPU أو فشل الموديل. الصورة تمر عبر Vercel Image Proxy لتجنب CORS. لا يوجد Vision API Key.</div>
 
     <div class="sep"></div>
     <div class="row">
@@ -311,7 +313,7 @@
     modelsUrl:"https://opencode.ai/inference/openai/v1/models",
     chatUrl:"https://opencode.ai/inference/openai/v1/chat/completions",
     visionEnabled:true,
-    visionMode:"full"
+    visionMode:"auto"
   };
 
   let settings = {...defaultSettings};
@@ -360,7 +362,7 @@
     $("#modelsUrl").value=settings.modelsUrl;
     $("#chatUrl").value=settings.chatUrl;
     $("#visionEnabled").checked=!!settings.visionEnabled;
-    $("#visionMode").value=settings.visionMode||"full";
+    $("#visionMode").value=settings.visionMode||"auto";
     const lastModel=await dbGet("kv","lastModel");
     if(lastModel) els.modelSelect.innerHTML=`<option value="${escapeHtml(lastModel)}">${escapeHtml(lastModel)}</option>`;
   }
@@ -372,7 +374,7 @@
       modelsUrl:$("#modelsUrl").value.trim()||defaultSettings.modelsUrl,
       chatUrl:$("#chatUrl").value.trim()||defaultSettings.chatUrl,
       visionEnabled:$("#visionEnabled").checked,
-      visionMode:$("#visionMode").value||"full"
+      visionMode:$("#visionMode").value||"auto"
     };
     await dbSet("kv","settings",settings);
     els.settingsModal.classList.remove("show"); toast("تم حفظ الإعدادات محليًا");
@@ -862,94 +864,216 @@ video_prompt_en: برومبت إنجليزي احترافي لتحويل الص�
     throw new Error("فشل كل محركات البحث المتاحة:\n\n"+errors.join("\n\n"));
   }
 
-  // ---------- Vision: free, local, in-browser ----------
-  let hfModulePromise = null;
-  let captionerPromise = null;
-  let detectorPromise = null;
+  // ---------- Vision: free, local, resilient ----------
+  // Strong engine: SmolVLM-256M on WebGPU.
+  // Stable fallback: Transformers.js v3 image caption + object detection on WASM.
+  let hf4Promise=null, hf3Promise=null;
+  let smolPromise=null, stableCaptionPromise=null, stableDetectorPromise=null;
 
-  async function getHF(){
-    if(!hfModulePromise){
-      hfModulePromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0");
-    }
-    return hfModulePromise;
+  function proxiedImageUrl(imageUrl){
+    return `/api/image?url=${encodeURIComponent(imageUrl)}`;
   }
 
-  async function getCaptioner(){
-    if(!captionerPromise){
-      captionerPromise = (async()=>{
-        const { pipeline } = await getHF();
-        setStatus("الرؤية المحلية: تحميل نموذج وصف الصورة لأول مرة...");
-        return pipeline("image-to-text","Xenova/vit-gpt2-image-captioning");
-      })();
+  async function getHF4(){
+    if(!hf4Promise){
+      hf4Promise=import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0");
     }
-    return captionerPromise;
+    return hf4Promise;
   }
 
-  async function getDetector(){
-    if(!detectorPromise){
-      detectorPromise = (async()=>{
-        const { pipeline } = await getHF();
-        setStatus("الرؤية المحلية: تحميل نموذج اكتشاف العناصر...");
-        return pipeline("object-detection","Xenova/detr-resnet-50");
+  async function getHF3(){
+    if(!hf3Promise){
+      // Pin a v3 release to avoid the ONNX Runtime qdq regression seen in some v4 browser sessions.
+      hf3Promise=import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1");
+    }
+    return hf3Promise;
+  }
+
+  async function getSmolVLM(){
+    if(!navigator.gpu){
+      throw new Error("WebGPU غير متاح على هذا الجهاز/المتصفح.");
+    }
+    if(!smolPromise){
+      smolPromise=(async()=>{
+        const { pipeline }=await getHF4();
+        setStatus("الرؤية: تحميل SmolVLM-256M لأول مرة...");
+        return pipeline(
+          "image-text-to-text",
+          "HuggingFaceTB/SmolVLM-256M-Instruct",
+          {device:"webgpu",dtype:"q4f16"}
+        );
       })();
     }
-    return detectorPromise;
+    return smolPromise;
+  }
+
+  async function getStableCaptioner(){
+    if(!stableCaptionPromise){
+      stableCaptionPromise=(async()=>{
+        const { pipeline }=await getHF3();
+        setStatus("الرؤية الاحتياطية: تحميل نموذج وصف الصورة...");
+        return pipeline(
+          "image-to-text",
+          "Xenova/vit-gpt2-image-captioning",
+          {device:"wasm"}
+        );
+      })();
+    }
+    return stableCaptionPromise;
+  }
+
+  async function getStableDetector(){
+    if(!stableDetectorPromise){
+      stableDetectorPromise=(async()=>{
+        const { pipeline }=await getHF3();
+        setStatus("الرؤية الاحتياطية: تحميل نموذج اكتشاف العناصر...");
+        return pipeline(
+          "object-detection",
+          "Xenova/detr-resnet-50",
+          {device:"wasm"}
+        );
+      })();
+    }
+    return stableDetectorPromise;
   }
 
   async function getDominantColors(imageUrl){
     try{
-      const r=await fetch(imageUrl,{mode:"cors"});
-      if(!r.ok) throw new Error("image fetch failed");
+      const r=await fetch(imageUrl);
+      if(!r.ok) throw new Error(`Image HTTP ${r.status}`);
       const blob=await r.blob();
       const bmp=await createImageBitmap(blob);
       const c=document.createElement("canvas");
-      c.width=48;c.height=48;
+      c.width=56;c.height=56;
       const ctx=c.getContext("2d",{willReadFrequently:true});
-      ctx.drawImage(bmp,0,0,48,48);
-      const data=ctx.getImageData(0,0,48,48).data;
+      ctx.drawImage(bmp,0,0,56,56);
+      const data=ctx.getImageData(0,0,56,56).data;
       const buckets=new Map();
       for(let i=0;i<data.length;i+=16){
         if(data[i+3]<100) continue;
-        const r=Math.round(data[i]/32)*32, g=Math.round(data[i+1]/32)*32, b=Math.round(data[i+2]/32)*32;
-        const key=`${Math.min(r,255)},${Math.min(g,255)},${Math.min(b,255)}`;
+        const rr=Math.min(255,Math.round(data[i]/32)*32);
+        const gg=Math.min(255,Math.round(data[i+1]/32)*32);
+        const bb=Math.min(255,Math.round(data[i+2]/32)*32);
+        const key=`${rr},${gg},${bb}`;
         buckets.set(key,(buckets.get(key)||0)+1);
       }
-      return [...buckets.entries()].sort((a,b)=>b[1]-a[1]).slice(0,6).map(([rgb])=>`rgb(${rgb})`);
-    }catch{
+      return [...buckets.entries()]
+        .sort((a,b)=>b[1]-a[1]).slice(0,6)
+        .map(([rgb])=>`rgb(${rgb})`);
+    }catch(e){
+      console.warn("Color extraction failed",e);
       return [];
     }
   }
 
-  async function analyzeVision(imageUrl){
-    if(!settings.visionEnabled) return "الرؤية المحلية غير مفعلة. سيعتمد التحليل على نص Exa ومعلومات الصفحة.";
-    if(!imageUrl) return "لم يعثر Exa على صورة منتج قابلة للتحليل؛ سيتم الاعتماد على النص.";
-    try{
-      setStatus("الرؤية المحلية: تحليل صورة المنتج داخل جهازك...");
-      const captioner=await getCaptioner();
-      const captionResult=await captioner(imageUrl,{max_new_tokens:64});
-      const caption=Array.isArray(captionResult) ? (captionResult[0]?.generated_text||"") : (captionResult?.generated_text||"");
-
-      let objects=[];
-      if((settings.visionMode||"full")==="full"){
-        try{
-          const detector=await getDetector();
-          const det=await detector(imageUrl,{threshold:0.55,percentage:true});
-          objects=(det||[]).slice(0,8).map(x=>`${x.label} (${Math.round((x.score||0)*100)}%)`);
-        }catch(e){
-          console.warn("Object detection skipped:",e);
+  function extractSmolText(result){
+    if(typeof result==="string") return result;
+    if(Array.isArray(result)){
+      const x=result[0];
+      if(typeof x==="string") return x;
+      if(x?.generated_text){
+        if(typeof x.generated_text==="string") return x.generated_text;
+        if(Array.isArray(x.generated_text)){
+          const last=x.generated_text[x.generated_text.length-1];
+          return last?.content || last?.text || JSON.stringify(last);
         }
       }
+      return x?.text || JSON.stringify(x);
+    }
+    return result?.generated_text || result?.text || JSON.stringify(result);
+  }
 
-      const colors=(settings.visionMode||"full")==="full" ? await getDominantColors(imageUrl) : [];
+  async function analyzeWithSmolVLM(imageUrl){
+    const pipe=await getSmolVLM();
+    setStatus("SmolVLM: فهم شكل المنتج والخامات والهوية البصرية...");
+    const messages=[{
+      role:"user",
+      content:[
+        {type:"image",url:imageUrl},
+        {type:"text",text:
+          "Analyze this e-commerce product image as a senior advertising art director. "+
+          "Describe ONLY what is visually supported: exact product type, shape, proportions, materials, surface finish, colors, packaging, logo/brand placement, readable text if clear, buttons/ports/details, camera angle, lighting, background, visual style, and any important identity cues. "+
+          "Then provide a concise section called AD CREATIVE GUIDANCE with recommended lighting, environment, composition, lens/camera feel, and what must NOT be visually changed. Do not invent unseen claims."
+        }
+      ]
+    }];
+
+    const result=await pipe(messages,{max_new_tokens:220,do_sample:false});
+    return extractSmolText(result);
+  }
+
+  async function analyzeWithStable(imageUrl, captionOnly=false){
+    setStatus("الرؤية الاحتياطية: تحليل الصورة...");
+    const captioner=await getStableCaptioner();
+    const capRes=await captioner(imageUrl,{max_new_tokens:64});
+    const caption=Array.isArray(capRes)
+      ? (capRes[0]?.generated_text||capRes[0]?.text||"")
+      : (capRes?.generated_text||capRes?.text||"");
+
+    let objects=[];
+    if(!captionOnly){
+      try{
+        const detector=await getStableDetector();
+        const det=await detector(imageUrl,{threshold:0.50,percentage:true});
+        objects=(det||[]).slice(0,10).map(x=>`${x.label} (${Math.round((x.score||0)*100)}%)`);
+      }catch(e){
+        console.warn("Stable detector failed",e);
+      }
+    }
+
+    const colors=captionOnly?[]:await getDominantColors(imageUrl);
+    return [
+      `Stable local caption: ${caption||"No caption produced."}`,
+      objects.length?`Detected objects: ${objects.join(", ")}`:"",
+      colors.length?`Dominant colors: ${colors.join(", ")}`:"",
+      "This fallback output is supporting visual evidence. Product facts from Exa/Jina remain authoritative if there is a conflict."
+    ].filter(Boolean).join("\n");
+  }
+
+  async function analyzeVision(originalImageUrl){
+    if(!settings.visionEnabled){
+      return "الرؤية المحلية غير مفعلة. سيتم الاعتماد على بيانات Exa/Jina.";
+    }
+    if(!originalImageUrl){
+      return "لم يعثر محرك البحث على صورة منتج قابلة للتحليل؛ سيتم الاعتماد على النص.";
+    }
+
+    const imageUrl=proxiedImageUrl(originalImageUrl);
+    const mode=settings.visionMode||"auto";
+    const errors=[];
+
+    if(mode==="smolvlm" || mode==="auto"){
+      try{
+        const result=await analyzeWithSmolVLM(imageUrl);
+        return [
+          "Vision engine: SmolVLM-256M-Instruct (local WebGPU)",
+          result
+        ].join("\n\n");
+      }catch(e){
+        console.warn("SmolVLM failed",e);
+        // reset in case model load promise was rejected
+        smolPromise=null;
+        errors.push("SmolVLM: "+(e.message||e));
+        if(mode==="smolvlm"){
+          // even explicit strong mode gets graceful fallback instead of killing whole generation
+          setStatus("SmolVLM فشل؛ الانتقال تلقائيًا للمحرك الاحتياطي...");
+        }
+      }
+    }
+
+    try{
+      const result=await analyzeWithStable(imageUrl,mode==="caption");
       return [
-        `Local image caption: ${caption||"No caption produced."}`,
-        objects.length?`Detected visual objects: ${objects.join(", ")}`:"",
-        colors.length?`Approximate dominant colors: ${colors.join(", ")}`:"",
-        "Important: this local vision output is supportive evidence only. Prefer exact brand/product facts extracted by Exa when there is any conflict."
-      ].filter(Boolean).join("\n");
+        "Vision engine: Stable local fallback (Transformers.js v3/WASM)",
+        errors.length?`Primary engine note: ${errors.join(" | ")}`:"",
+        result
+      ].filter(Boolean).join("\n\n");
     }catch(e){
-      console.error("Local vision error",e);
-      return "تعذر تشغيل الرؤية المحلية لهذه الصورة (غالبًا بسبب CORS للصورة أو عدم دعم المتصفح). سيتم الاعتماد على وصف Exa والنصوص المستخرجة. التفاصيل: "+e.message;
+      errors.push("Stable engine: "+(e.message||e));
+      return [
+        "تعذر تشغيل محركات الرؤية المحلية، لكن سيتم استكمال إنشاء البرومبت اعتمادًا على بيانات Exa/Jina.",
+        ...errors
+      ].join("\n");
     }
   }
 
