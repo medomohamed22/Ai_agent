@@ -420,7 +420,7 @@ select{
       <div class="field"><label>الرؤية المحلية</label><select id="visionMode"><option value="auto">تلقائي — SmolVLM ثم fallback</option><option value="smolvlm">SmolVLM فقط</option><option value="stable">محرك ثابت</option><option value="caption">Caption خفيف</option></select></div>
     </div>
 
-    <div class="field"><label>نموذج OpenCode المجاني</label><div class="grid2"><select id="modelSelect"><option value="">اضغط تحديث</option></select><button class="btn btn-soft" id="refreshModels">↻ تحديث من OpenCode</button></div><div class="tiny" id="modelStatus" style="margin-top:7px">القائمة تُقرأ مباشرة من endpoint الرسمي عند كل تحديث.</div></div>
+    <div class="field"><label>نموذج OpenCode المجاني</label><div class="grid2"><select id="modelSelect"><option value="">اضغط تحديث</option></select><button class="btn btn-soft" id="refreshModels">↻ تحديث من OpenCode</button></div><div class="tiny" id="modelStatus" style="margin-top:7px">القائمة تُقرأ مباشرة من OpenCode Zen الرسمي (/zen/v1/models) عند كل تحديث.</div></div>
 
     <div class="help">OpenCode المجاني يعمل بدون API Key. Exa/Jina يمران عبر Vercel Functions. الرؤية تعمل محليًا داخل جهازك والصورة تمر عبر Image Proxy لتجنب CORS.</div>
     <div class="sep"></div>
@@ -485,82 +485,45 @@ async function saveSettings(){
   await dbSet("kv","settings",settings);els.settingsModal.classList.remove("show");toast("تم حفظ الإعدادات");
 }
 
-const ALWAYS_FREE_IDS=new Set(["big-pickle"]);
-
 function isFreeModel(m){
-  const id=String(m.id||m.model||"").toLowerCase();
-  const name=String(m.name||m.display_name||"").toLowerCase();
-
-  // Official naming used by many OpenCode free models.
-  if(id.endsWith("-free") || id.includes("-free-") || name.includes(" free")) return true;
-
-  // Official free alias that does not carry "-free" in the ID.
-  if(ALWAYS_FREE_IDS.has(id)) return true;
-
-  // Prefer explicit live metadata from the official models endpoint when present.
-  if(m.free===true || m.is_free===true || m.isFree===true) return true;
-  const pricing=m.pricing||m.price||m.cost||null;
+  if(m?.free===true || m?.tier==="free") return true;
+  const id=String(m?.id||m?.model||"").toLowerCase();
+  if(id.includes("free")) return true;
+  const pricing=m?.pricing||m?.price||null;
   if(pricing && typeof pricing==="object"){
-    const vals=Object.values(pricing)
-      .filter(v=>v!==null && v!==undefined && v!=="")
-      .map(v=>Number(v))
-      .filter(Number.isFinite);
+    const vals=Object.values(pricing).filter(v=>v!==null&&v!==undefined&&v!=="").map(Number).filter(Number.isFinite);
     if(vals.length && vals.every(v=>v===0)) return true;
   }
   return false;
 }
 
 async function refreshModels(){
-  els.modelStatus.textContent="جارٍ قراءة قائمة OpenCode الرسمية الحية...";
+  els.modelStatus.textContent="جارٍ قراءة OpenCode Zen الرسمية...";
   els.modelSelect.disabled=true;
-
   try{
-    // Cache-busting is intentional: every click should discover newly-added models.
-    const r=await fetch(`/api/opencode?action=models&t=${Date.now()}`,{
-      method:"GET",
-      headers:{"Accept":"application/json","Cache-Control":"no-cache"},
-      cache:"no-store"
-    });
-
-    const raw=await r.text();
-    let j;
-    try{j=JSON.parse(raw)}catch{j={error:raw}}
-
-    if(!r.ok){
-      throw new Error(`OpenCode Models HTTP ${r.status}: ${j.error?.message||j.error||raw.slice(0,260)}`);
-    }
-
-    const all=Array.isArray(j) ? j : (j.data||j.models||[]);
-    if(!Array.isArray(all) || !all.length){
-      throw new Error("OpenCode لم يُرجع قائمة نماذج قابلة للقراءة.");
-    }
-
+    const r=await fetch(`/api/opencode?action=models&t=${Date.now()}`,{cache:"no-store",headers:{"Accept":"application/json","Cache-Control":"no-cache"}});
+    const raw=await r.text();let j;try{j=JSON.parse(raw)}catch{j={error:raw}}
+    if(!r.ok)throw new Error(`HTTP ${r.status}: ${j.error?.message||j.error||raw.slice(0,240)}`);
+    const all=Array.isArray(j.data)?j.data:(Array.isArray(j.models)?j.models:[]);
+    if(!all.length)throw new Error("OpenCode Zen رجع قائمة فارغة.");
     const free=all.filter(isFreeModel);
     if(!free.length){
-      els.modelSelect.innerHTML='<option value="">لا توجد نماذج مجانية معلَّمة حاليًا</option>';
-      els.modelStatus.textContent=`تم جلب ${all.length} نموذج من OpenCode رسميًا، لكن لم يُعلَّم أي منها كمجاني في البيانات الحالية.`;
+      els.modelSelect.innerHTML='<option value="">لا توجد نماذج مجانية ظاهرة حاليًا</option>';
+      els.modelStatus.textContent=`تم جلب ${all.length} نموذج رسمي، لكن لا يوجد موديل معلّم كمجاني.`;
       return;
     }
-
     const prev=(await dbGet("kv","lastModel"))||"";
+    free.sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id)));
     els.modelSelect.innerHTML=free.map(m=>{
-      const id=m.id||m.model;
-      const nm=m.name||m.display_name||id;
-      return `<option value="${escapeHtml(id)}" ${id===prev?"selected":""}>${escapeHtml(nm)} — ${escapeHtml(id)}</option>`;
+      const id=m.id||m.model,nm=m.name||m.display_name||id,api=m.api?` • ${m.api}`:"";
+      return `<option value="${escapeHtml(id)}" ${id===prev?"selected":""}>${escapeHtml(nm)}${escapeHtml(api)}</option>`;
     }).join("");
-
-    // If the previously-selected model disappeared, select the first current free model.
-    if(!els.modelSelect.value && free[0]){
-      els.modelSelect.value=free[0].id||free[0].model;
-    }
-
-    els.modelStatus.textContent=`✓ قائمة رسمية مباشرة: ${free.length} نموذج مجاني من أصل ${all.length}. آخر تحديث: ${new Date().toLocaleTimeString("ar-EG")}`;
+    if(!els.modelSelect.value && free[0])els.modelSelect.value=free[0].id||free[0].model;
+    els.modelStatus.textContent=`✓ OpenCode Zen مباشر: ${free.length} مجاني من ${all.length} نموذج • ${new Date().toLocaleTimeString("ar-EG")}`;
   }catch(e){
     els.modelSelect.innerHTML='<option value="">تعذر تحميل النماذج</option>';
-    els.modelStatus.textContent="فشل جلب القائمة الرسمية: "+(e.message||e);
-  }finally{
-    els.modelSelect.disabled=false;
-  }
+    els.modelStatus.textContent="فشل OpenCode Zen: "+(e.message||e);
+  }finally{els.modelSelect.disabled=false}
 }
 
 async function exaRequest(endpoint,body){
