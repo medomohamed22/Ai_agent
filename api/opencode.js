@@ -4,11 +4,17 @@ export default async function handler(req, res) {
 
     if (action === "models") {
       const upstream = await fetch("https://opencode.ai/inference/openai/v1/models", {
-        headers: { "Accept": "application/json" }
+        method: "GET",
+        headers: {
+          "Accept": "application/json",
+          "Cache-Control": "no-cache"
+        },
+        cache: "no-store"
       });
       const raw = await upstream.text();
       res.status(upstream.status);
       res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
       return res.send(raw);
     }
 
