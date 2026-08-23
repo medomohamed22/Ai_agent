@@ -130,7 +130,7 @@
   <section class="hero">
     <span class="pill">من رابط المنتج إلى برومبتات إعلانية جاهزة</span>
     <h1>حلّل المنتج، افهم هويته، وأنشئ برومبت صورة وفيديو احترافي</h1>
-    <p>يستخدم Exa لجلب بيانات المنتج، ورؤية محلية مجانية داخل المتصفح لتحليل الصورة، ثم يرسل سياقًا منظمًا إلى نموذج مجاني من OpenCode بدون مفتاح API.</p>
+    <p>يستخدم Exa أو Jina لجلب بيانات المنتج، ورؤية محلية مجانية لتحليل الصورة، ثم يرسل السياق إلى نموذج OpenCode مجاني عبر Vercel Functions لتجنب مشاكل CORS.</p>
     <div id="originWarning" class="help hidden" style="margin:14px auto 0;max-width:760px;text-align:right"></div>
   </section>
 
@@ -217,7 +217,7 @@
           ④ يدمج النص + الوصف البصري + ملاحظاتك في سياق واحد.<br>
           ⑤ يطلب من OpenCode إخراج برومبت صورة وفيديو بصيغة منظمة.
         </div>
-        <div class="help">OpenCode المجاني لا يحتاج مفتاح API هنا. يمكنك استخدام Exa أو Jina أو الاثنين معًا؛ ضع المفتاح/المفاتيح التي تريدها واختر ترتيب البحث. أداة الرؤية تعمل محليًا داخل المتصفح عبر Transformers.js ولا ترسل الصورة إلى Vision API خارجي.</div>
+        <div class="help">OpenCode المجاني لا يحتاج مفتاح API. الاتصالات الخارجية تمر الآن عبر Vercel Functions من نفس الدومين، لذلك لا تعتمد على CORS في المتصفح. أداة الرؤية تعمل محليًا داخل المتصفح عبر Transformers.js ولا ترسل الصورة إلى Vision API خارجي.</div>
       </section>
     </aside>
   </div>
@@ -400,35 +400,40 @@
   }
   async function refreshModels(){
     try{
-      els.modelStatus.textContent="جارٍ جلب النماذج..."; els.modelDot.className="dot"; busy(true);
-      const headers={"Accept":"application/json"};
-      const r=await fetch(settings.modelsUrl,{headers});
-      if(!r.ok) throw new Error(`OpenCode models: HTTP ${r.status}`);
-      const j=await r.json();
+      els.modelStatus.textContent="جارٍ جلب النماذج المجانية من OpenCode...";
+      els.modelDot.className="dot";
+      busy(true);
+
+      const r=await fetch("/api/opencode?action=models",{headers:{"Accept":"application/json"}});
+      const raw=await r.text();
+      let j;
+      try{j=JSON.parse(raw)}catch{j={error:raw}}
+      if(!r.ok) throw new Error(`OpenCode Models: HTTP ${r.status} — ${j.error?.message||j.error||raw.slice(0,250)}`);
+
       const all=Array.isArray(j)?j:(j.data||j.models||[]);
       let free=all.filter(isFreeModel);
       if(!free.length) free=all.filter(m=>KNOWN_FREE.has((m.id||m.model||"").toLowerCase()));
-      if(!free.length) throw new Error("تم الاتصال لكن لم أستطع تحديد نماذج مجانية من البيانات الراجعة.");
+      if(!free.length) free=FREE_FALLBACK_MODELS;
+
       const prev=(await dbGet("kv","lastModel"))||"";
       els.modelSelect.innerHTML=free.map(m=>{
         const id=m.id||m.model; const nm=m.name||m.display_name||id;
         return `<option value="${escapeHtml(id)}" ${id===prev?"selected":""}>${escapeHtml(nm)} — ${escapeHtml(id)}</option>`;
       }).join("");
-      els.modelStatus.textContent=`تم العثور على ${free.length} نموذج مجاني.`; els.modelDot.className="dot ok";
+      els.modelStatus.textContent=`تم تحميل ${free.length} نموذج مجاني عبر Vercel.`;
+      els.modelDot.className="dot ok";
       await dbSet("kv","cachedModels",free);
     }catch(e){
       const prev=(await dbGet("kv","lastModel"))||"";
       els.modelSelect.innerHTML=FREE_FALLBACK_MODELS.map(m =>
         `<option value="${escapeHtml(m.id)}" ${m.id===prev?"selected":""}>${escapeHtml(m.name)} — ${escapeHtml(m.id)}</option>`
       ).join("");
-      els.modelStatus.textContent=`تعذر جلب القائمة الحية، لذلك تم تحميل ${FREE_FALLBACK_MODELS.length} نماذج مجانية احتياطية تعمل بدون API Key.`;
+      els.modelStatus.textContent="تعذر جلب القائمة الحية؛ تم تحميل القائمة المجانية الاحتياطية. "+(e.message||e);
       els.modelDot.className="dot ok";
-      await dbSet("kv","cachedModels",FREE_FALLBACK_MODELS);
     }finally{busy(false)}
   }
 
   async function callOpenCode(model, context){
-    const headers={"Content-Type":"application/json","Accept":"application/json"};
     const system = `أنت مدير إبداعي متخصص في إعلانات التجارة الإلكترونية. حلّل سياق المنتج بدقة ولا تخترع خصائص غير موجودة.
 أعد JSON صالحًا فقط بدون Markdown بالمفاتيح:
 product_summary_ar: ملخص عربي قصير للمنتج وهويته الإعلانية،
@@ -436,16 +441,35 @@ image_prompt_en: برومبت إنجليزي شديد الاحتراف لصور�
 negative_prompt_en: قائمة إنجليزية بالأخطاء المراد تجنبها خصوصًا تشويه المنتج/الشعار/النصوص/النسب،
 video_prompt_en: برومبت إنجليزي احترافي لتحويل الصورة المولدة إلى فيديو إعلاني، اعتبر الصورة المولدة Reference Image/First Frame، وحدد الحركة والكاميرا والإضاءة والتسلسل الزمني ومدة 6-10 ثوانٍ وCTA بصري من غير اختراع نص على العبوة.
 يجب أن تكون البرومبتات قابلة للنسخ مباشرة لأدوات توليد الصور والفيديو.`;
-    const body={model,messages:[{role:"system",content:system},{role:"user",content:context}],temperature:.55};
-    const r=await fetch(settings.chatUrl,{method:"POST",headers,body:JSON.stringify(body)});
-    if(!r.ok) throw new Error(`OpenCode chat: HTTP ${r.status} — ${(await r.text()).slice(0,260)}`);
-    const j=await r.json();
-    const text=j.choices?.[0]?.message?.content ?? j.output_text ?? j.output?.[0]?.content?.[0]?.text;
-    if(!text) throw new Error("OpenCode أعاد استجابة بدون نص.");
-    try{return JSON.parse(stripCodeFence(text));}
+    let r;
+    try{
+      r=await fetch("/api/opencode",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Accept":"application/json"},
+        body:JSON.stringify({
+          action:"chat",
+          model,
+          messages:[
+            {role:"system",content:system},
+            {role:"user",content:context}
+          ],
+          temperature:.55
+        })
+      });
+    }catch(e){
+      throw new Error("OpenCode Proxy: تعذر الاتصال بدالة Vercel — "+(e.message||e));
+    }
+    const raw=await r.text();
+    let j;
+    try{j=JSON.parse(raw)}catch{j={error:raw}}
+    if(!r.ok){
+      throw new Error(`OpenCode: HTTP ${r.status} — ${j.error?.message||j.error||raw.slice(0,300)}`);
+    }
+    const textOut=j.choices?.[0]?.message?.content ?? j.output_text ?? j.output?.[0]?.content?.[0]?.text;
+    if(!textOut) throw new Error("OpenCode أعاد استجابة بدون نص.");
+    try{return JSON.parse(stripCodeFence(textOut));}
     catch{
-      // graceful fallback if the model ignores JSON
-      return {product_summary_ar:"تعذر تحليل JSON المنظم؛ تم حفظ رد النموذج الخام.",image_prompt_en:text,negative_prompt_en:"",video_prompt_en:""};
+      return {product_summary_ar:"تعذر تحليل JSON المنظم؛ تم حفظ رد النموذج الخام.",image_prompt_en:textOut,negative_prompt_en:"",video_prompt_en:""};
     }
   }
 
@@ -482,21 +506,28 @@ video_prompt_en: برومبت إنجليزي احترافي لتحويل الص�
   async function exaRequest(endpoint, body, label){
     let r;
     try{
-      r=await fetch(`https://api.exa.ai/${endpoint}`,{
+      r=await fetch("/api/exa",{
         method:"POST",
-        headers:exaHeaders(),
-        body:JSON.stringify(body)
+        headers:{
+          "Content-Type":"application/json",
+          "Accept":"application/json",
+          "x-client-exa-key":settings.exaKey
+        },
+        body:JSON.stringify({endpoint,body})
       });
     }catch(e){
-      const proto=location.protocol;
-      throw new Error(
-        `${label}: المتصفح منع الاتصال قبل وصول الطلب إلى Exa. `+
-        `Origin الحالي هو ${proto}//. غالبًا CORS بسبب فتح الملف من ${proto}. `+
-        `التفاصيل الأصلية: ${e.message||e}`
-      );
+      throw new Error(`${label}: تعذر الاتصال بـ Vercel Function — ${e.message||e}`);
     }
-    if(!r.ok) await parseExaError(r,label);
-    return r.json();
+    const raw=await r.text();
+    let j;
+    try{j=JSON.parse(raw)}catch{j={error:raw}}
+    if(!r.ok){
+      const detail=j.error?.message||j.error||raw;
+      if(r.status===401 || r.status===403) throw new Error(`${label}: مفتاح Exa مرفوض (HTTP ${r.status}) — ${detail}`);
+      if(r.status===429) throw new Error(`${label}: تم تجاوز الحد/الرصيد (HTTP 429) — ${detail}`);
+      throw new Error(`${label}: HTTP ${r.status} — ${String(detail).slice(0,500)}`);
+    }
+    return j;
   }
 
   async function testExaConnection(){
@@ -642,54 +673,48 @@ video_prompt_en: برومبت إنجليزي احترافي لتحويل الص�
     return h;
   }
 
-  async function jinaFetch(url, options={}, label="Jina"){
+  async function jinaProxy(action, payload={}, label="Jina"){
     let r;
     try{
-      r=await fetch(url,options);
+      r=await fetch("/api/jina",{
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "Accept":"application/json",
+          "x-client-jina-key":settings.jinaKey
+        },
+        body:JSON.stringify({action,...payload})
+      });
     }catch(e){
-      throw new Error(`${label}: المتصفح منع الاتصال قبل وصول الطلب إلى Jina — ${e.message||e}`);
+      throw new Error(`${label}: تعذر الاتصال بـ Vercel Function — ${e.message||e}`);
     }
+    const raw=await r.text();
+    let j;
+    try{j=JSON.parse(raw)}catch{j={error:raw}}
     if(!r.ok){
-      let detail="";
-      try{ detail=(await r.text()).slice(0,500); }catch{}
-      if(r.status===401 || r.status===403){
-        throw new Error(`${label}: مفتاح Jina مرفوض أو غير مصرح (HTTP ${r.status})${detail?" — "+detail:""}`);
-      }
-      if(r.status===429){
-        throw new Error(`${label}: تم تجاوز حد الاستخدام (HTTP 429)${detail?" — "+detail:""}`);
-      }
-      throw new Error(`${label}: HTTP ${r.status}${detail?" — "+detail:""}`);
+      const detail=j.error?.message||j.error||raw;
+      if(r.status===401 || r.status===403) throw new Error(`${label}: مفتاح Jina مرفوض (HTTP ${r.status}) — ${detail}`);
+      if(r.status===429) throw new Error(`${label}: تم تجاوز حد الاستخدام (HTTP 429) — ${detail}`);
+      throw new Error(`${label}: HTTP ${r.status} — ${String(detail).slice(0,500)}`);
     }
-    return r;
+    return j;
   }
 
   async function testJinaConnection(){
     const status=$("#jinaTestStatus");
     const key=$("#jinaKey").value.trim();
     if(!key){ status.textContent="أدخل مفتاح Jina أولًا."; return; }
-
     const old=settings.jinaKey;
     settings.jinaKey=key;
     status.textContent="جارٍ اختبار Jina...";
     try{
-      const q=encodeURIComponent("OpenAI");
-      const r=await jinaFetch(`https://s.jina.ai/?q=${q}`,{
-        headers:jinaHeaders()
-      },"اختبار Jina");
-      const ct=r.headers.get("content-type")||"";
-      if(ct.includes("application/json")){
-        await r.json();
-      }else{
-        await r.text();
-      }
-      status.textContent="✓ الاتصال والمفتاح يعملان.";
-      status.style.color="var(--ok)";
+      const j=await jinaProxy("test",{},"اختبار Jina");
+      status.textContent=j.ok?"✓ الاتصال والمفتاح يعملان.":"تم الاتصال لكن الاستجابة غير متوقعة.";
+      status.style.color=j.ok?"var(--ok)":"var(--bad)";
     }catch(e){
       status.textContent=e.message;
       status.style.color="var(--bad)";
-    }finally{
-      settings.jinaKey=old;
-    }
+    }finally{settings.jinaKey=old}
   }
 
   function parseJinaJsonPayload(j){
@@ -741,62 +766,19 @@ video_prompt_en: برومبت إنجليزي احترافي لتحويل الص�
 
   async function jinaReader(url){
     if(!settings.jinaKey) throw new Error("أضف Jina API Key من الإعدادات أولًا.");
-    const endpoint="https://r.jina.ai/"+url;
-    const r=await jinaFetch(endpoint,{
-      headers:{
-        ...jinaHeaders(),
-        "X-Return-Format":"markdown",
-        "X-With-Images-Summary":"true",
-        "X-With-Links-Summary":"true"
-      }
-    },"Jina Reader");
-
-    const ct=r.headers.get("content-type")||"";
-    if(ct.includes("application/json")){
-      const j=await r.json();
-      const items=parseJinaJsonPayload(j);
-      const x=items[0]||{};
-      return {
-        title:x.title||"",
-        text:x.text||JSON.stringify(j).slice(0,24000),
-        image:x.image||"",
-        url:x.url||url
-      };
-    }
-    const md=await r.text();
+    const j=await jinaProxy("reader",{url},"Jina Reader");
     return {
-      title:extractTitleFromMarkdown(md),
-      text:md.slice(0,24000),
-      image:extractImageFromMarkdown(md),
-      url
+      title:j.title||"",
+      text:(j.text||"").slice(0,24000),
+      image:j.image||"",
+      url:j.url||url
     };
   }
 
   async function jinaSearch(url){
     if(!settings.jinaKey) throw new Error("أضف Jina API Key من الإعدادات أولًا.");
-    const u=new URL(url);
-    const q=encodeURIComponent(`site:${u.hostname} exact product details features specifications materials colors appearance brand ${url}`);
-    const r=await jinaFetch(`https://s.jina.ai/?q=${q}`,{
-      headers:{
-        ...jinaHeaders(),
-        "Accept":"application/json",
-        "X-Retain-Images":"none"
-      }
-    },"Jina Search");
-
-    const ct=r.headers.get("content-type")||"";
-    if(ct.includes("application/json")){
-      const j=await r.json();
-      return parseJinaJsonPayload(j).slice(0,5);
-    }
-
-    const md=await r.text();
-    return [{
-      title:extractTitleFromMarkdown(md)||"Jina Search result",
-      url,
-      text:md.slice(0,18000),
-      image:extractImageFromMarkdown(md)
-    }];
+    const j=await jinaProxy("search",{url},"Jina Search");
+    return (j.results||[]).slice(0,5);
   }
 
   async function gatherProductJina(url){
@@ -1073,8 +1055,11 @@ ${brief||"لا توجد ملاحظات إضافية."}
 
   function humanFetchError(e){
     const m=e?.message||String(e);
+    if(location.protocol==="https:"){
+      return m;
+    }
     if(/Failed to fetch|NetworkError|Load failed/i.test(m)){
-      return `فشل اتصال من المتصفح (${location.protocol}). المفتاح قد يكون صحيحًا، لكن المتصفح منع الطلب بسبب الشبكة/CORS. افتح الصفحة من http://localhost بدل ${location.protocol}// ثم أعد المحاولة.`;
+      return `تعذر الوصول إلى Vercel Functions من ${location.protocol}. انشر مجلد المشروع كاملًا على Vercel وافتح رابط https:// الناتج.`;
     }
     return m;
   }
@@ -1105,7 +1090,7 @@ ${brief||"لا توجد ملاحظات إضافية."}
   const originWarning=$("#originWarning");
   if(location.protocol==="file:" || location.protocol==="content:"){
     originWarning.classList.remove("hidden");
-    originWarning.innerHTML=`<b>تنبيه مهم:</b> الصفحة مفتوحة من <code>${escapeHtml(location.protocol)}//</code>. على أندرويد يظهر هذا كثيرًا كـ <code>content://</code>. بعض APIs، ومنها Exa حسب إعداد CORS في المتصفح، قد تُمنع قبل فحص المفتاح. الكود سيعرض الآن السبب الحقيقي. للحصول على اتصال موثوق استخدم <code>http://localhost</code>.`;
+    originWarning.innerHTML=`<b>هذه النسخة مخصصة للنشر على Vercel.</b> افتحها من رابط https:// الخاص بمشروع Vercel حتى تعمل مسارات <code>/api/*</code>.`;
   }
 
   loadSettings().catch(console.error);
