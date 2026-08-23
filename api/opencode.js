@@ -77,7 +77,7 @@ function toResponsesPayload(p) {
     instructions: instructions || undefined,
     input,
     temperature: p.temperature,
-    max_output_tokens: p.max_tokens || 8192,
+    max_output_tokens: p.max_tokens || 4096,
     stream: false
   };
 }
@@ -92,7 +92,7 @@ function toAnthropicPayload(p) {
       role: m.role === 'assistant' ? 'assistant' : 'user',
       content: textOf(m.content)
     })),
-    max_tokens: p.max_tokens || 8192,
+    max_tokens: p.max_tokens || 4096,
     temperature: p.temperature,
     stream: false
   };
@@ -110,7 +110,7 @@ function toGeminiPayload(p) {
     contents,
     generationConfig: {
       temperature: p.temperature,
-      maxOutputTokens: p.max_tokens || 8192
+      maxOutputTokens: p.max_tokens || 4096
     }
   };
 }
@@ -222,7 +222,7 @@ export default async function handler(req, res) {
         model: payload.model,
         messages: payload.messages,
         temperature: payload.temperature ?? 0.55,
-        max_tokens: payload.max_tokens || 8192,
+        max_tokens: payload.max_tokens || 4096,
         stream: false
       };
     } else if (protocol === 'responses') {
@@ -239,9 +239,19 @@ export default async function handler(req, res) {
       if (process.env.OPENCODE_API_KEY) headers['x-goog-api-key'] = process.env.OPENCODE_API_KEY;
     }
 
-    const { response, url } = await fetchOpenCode(path, {
-      method: 'POST', headers, body: JSON.stringify(body), cache: 'no-store'
-    });
+    const controller = new AbortController();
+    const timeoutMs = 110000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response, url;
+    try {
+      const result = await fetchOpenCode(path, {
+        method: 'POST', headers, body: JSON.stringify(body), cache: 'no-store', signal: controller.signal
+      });
+      response = result.response;
+      url = result.url;
+    } finally {
+      clearTimeout(timer);
+    }
     const raw = await response.text();
     let d;
     try { d = JSON.parse(raw); }
@@ -259,7 +269,8 @@ export default async function handler(req, res) {
       _opencode: { protocol, url }
     });
   } catch (e) {
-    const message = e?.name === 'AbortError' ? 'OpenCode request timed out' : (e?.message || String(e));
-    return sendJson(res, 500, { error: message });
+    const timedOut = e?.name === 'AbortError';
+    const message = timedOut ? 'OpenCode upstream exceeded 110 seconds' : (e?.message || String(e));
+    return sendJson(res, timedOut ? 504 : 500, { error: message });
   }
 }
