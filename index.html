@@ -474,6 +474,19 @@ function setStage(stage,status="active",msg="جاري التنفيذ"){
 function resetStages(){ $$(".stage").forEach(x=>{x.classList.remove("active","done","error");x.lastElementChild.textContent="انتظار"});els.progressBar.style.width="0";els.progressPct.textContent="0%";els.stageLabel.textContent="0%";els.progressText.textContent="جاهز"}
 function busy(on){els.generateBtn.disabled=on;els.generateBtn.classList.toggle("running",on)}
 function stripFence(s=""){return s.trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"")}
+function parseJsonRobust(raw){
+  let s=stripFence(String(raw||"")).trim();
+  try{return JSON.parse(s)}catch{}
+  const a=s.indexOf("{"),b=s.lastIndexOf("}");
+  if(a>=0&&b>a){
+    s=s.slice(a,b+1);
+    try{return JSON.parse(s)}catch{}
+    // Conservative cleanup for common model JSON mistakes.
+    s=s.replace(/,\s*([}\]])/g,"$1").replace(/[“”]/g,'"').replace(/[‘’]/g,"'");
+    try{return JSON.parse(s)}catch{}
+  }
+  throw new Error("INVALID_JSON");
+}
 
 async function loadSettings(){
   settings={...defaultSettings,...((await dbGet("kv","settings"))||{})};
@@ -498,31 +511,24 @@ function isFreeModel(m){
 }
 
 async function refreshModels(){
-  els.modelStatus.textContent="جارٍ قراءة OpenCode Zen الرسمية...";
+  els.modelStatus.textContent="جارٍ قراءة النماذج المجانية القابلة للتشغيل من OpenCode...";
   els.modelSelect.disabled=true;
   try{
     const r=await fetch(`/api/opencode?action=models&t=${Date.now()}`,{cache:"no-store",headers:{"Accept":"application/json","Cache-Control":"no-cache"}});
     const raw=await r.text();let j;try{j=JSON.parse(raw)}catch{j={error:raw}}
-    if(!r.ok)throw new Error(`HTTP ${r.status}: ${j.error?.message||j.error||raw.slice(0,240)}`);
-    const all=Array.isArray(j.data)?j.data:(Array.isArray(j.models)?j.models:[]);
-    if(!all.length)throw new Error("OpenCode Zen رجع قائمة فارغة.");
-    const free=all.filter(isFreeModel);
-    if(!free.length){
-      els.modelSelect.innerHTML='<option value="">لا توجد نماذج مجانية ظاهرة حاليًا</option>';
-      els.modelStatus.textContent=`تم جلب ${all.length} نموذج رسمي، لكن لا يوجد موديل معلّم كمجاني.`;
-      return;
-    }
+    if(!r.ok)throw new Error(`OpenCode Models HTTP ${r.status}: ${j.error?.message||j.error||raw.slice(0,260)}`);
+    const free=j.data||j.models||[];
+    if(!free.length)throw new Error("لم يرجع OpenCode أي نموذج مجاني قابل للتشغيل بدون مفتاح حاليًا.");
     const prev=(await dbGet("kv","lastModel"))||"";
-    free.sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id)));
     els.modelSelect.innerHTML=free.map(m=>{
-      const id=m.id||m.model,nm=m.name||m.display_name||id,api=m.api?` • ${m.api}`:"";
-      return `<option value="${escapeHtml(id)}" ${id===prev?"selected":""}>${escapeHtml(nm)}${escapeHtml(api)}</option>`;
+      const id=m.id||m.model,nm=m.name||m.display_name||id;
+      return `<option value="${escapeHtml(id)}" ${id===prev?"selected":""}>${escapeHtml(nm)} — ${escapeHtml(id)}</option>`;
     }).join("");
-    if(!els.modelSelect.value && free[0])els.modelSelect.value=free[0].id||free[0].model;
-    els.modelStatus.textContent=`✓ OpenCode Zen مباشر: ${free.length} مجاني من ${all.length} نموذج • ${new Date().toLocaleTimeString("ar-EG")}`;
+    if(!els.modelSelect.value&&free[0])els.modelSelect.value=free[0].id||free[0].model;
+    els.modelStatus.textContent=`✓ ${free.length} نموذج مجاني قابل للتشغيل — المصدر الرسمي OpenCode Zen، والتنفيذ عبر Inference API.`;
   }catch(e){
     els.modelSelect.innerHTML='<option value="">تعذر تحميل النماذج</option>';
-    els.modelStatus.textContent="فشل OpenCode Zen: "+(e.message||e);
+    els.modelStatus.textContent=e.message||String(e);
   }finally{els.modelSelect.disabled=false}
 }
 
@@ -623,45 +629,48 @@ function estimateTokens(text){
 async function callCreativeAI(context){
   const model=els.modelSelect.value;if(!model)throw new Error("حدّث نماذج OpenCode واختر نموذجًا.");
   await dbSet("kv","lastModel",model);
-  const system=`You are a senior performance creative director, product art director and prompt engineer.
-Return VALID JSON ONLY, no markdown.
-The JSON schema must be:
-{
- "product_summary_ar":"...",
- "strategy":{"usp":"...","audience":"...","core_message":"...","platform_notes":"...","ad_type_notes":"..."},
- "angles":[{"name":"...","idea":"...","why":"..."}],
- "hooks":[{"hook":"...","angle":"...","delivery":"..."}],
- "storyboard":[{"scene":1,"duration":"0-2s","visual":"...","camera":"...","voiceover":"...","onscreen":"..."}],
- "competitor_analysis_ar":"...",
- "visual_identity_ar":"...",
- "image_prompt_en":"...",
- "negative_prompt_en":"...",
- "video_prompt_en":"...",
- "variations":[{"name":"...","angle":"...","image_prompt":"...","video_prompt":"..."}],
- "creative_score":{"total":0,"hook":0,"clarity":0,"brand_fit":0,"platform_fit":0,"conversion":0,"visual_strength":0,"advice_ar":"..."}
-}
-Generate exactly the requested number of variations. Angles should be diverse. Hooks should suit the selected platform. Storyboard must match the selected ad type. Optimize image prompt specifically for the chosen image model and video prompt specifically for the chosen video model. Video prompt must assume the generated image is Reference Image / First Frame. Scores are 0-100 integers.`;
-  const inputTokens=estimateTokens(system+"\n"+context);
-  setStatus(`OpenCode: إرسال نحو ${inputTokens.toLocaleString("ar-EG")} token إدخال، بحد أقصى 4096 token إخراج...`);
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),105000);
-  let r;
-  try{
-    r=await fetch("/api/opencode",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({action:"chat",model,messages:[{role:"system",content:system},{role:"user",content:context}],temperature:.45,max_tokens:4096}),
-      signal:controller.signal
-    });
-  }catch(e){
-    if(e?.name==="AbortError")throw new Error("OpenCode استغرق أكثر من 105 ثانية. جرّب نموذجًا مجانيًا أسرع أو قلل عدد الـVariations.");
-    throw e;
-  }finally{clearTimeout(timer)}
-  const raw=await r.text();let j;try{j=JSON.parse(raw)}catch{j={error:raw}};if(!r.ok)throw new Error(`OpenCode HTTP ${r.status}: ${j.error?.message||j.error||raw.slice(0,260)}`);
-  const txt=j.choices?.[0]?.message?.content??j.output_text;if(!txt)throw new Error("OpenCode لم يرجع نصًا.");
-  try{return JSON.parse(stripFence(txt))}catch{throw new Error("النموذج لم يرجع JSON صالحًا. جرّب نموذجًا مجانيًا آخر.")}
-}
+  const variationCount=Math.min(Number(els.variationCount.value)||3,5);
+  const system=`You are a senior ecommerce creative director. Return ONE valid compact JSON object only. No markdown, no commentary.
+Required keys:
+product_summary_ar:string;
+strategy:{usp,audience,core_message,platform_notes,ad_type_notes};
+angles: exactly 4 items {name,idea,why};
+hooks: exactly 5 items {hook,angle,delivery};
+storyboard: exactly 5 items {scene,duration,visual,camera,voiceover,onscreen};
+competitor_analysis_ar:string;
+visual_identity_ar:string;
+image_prompt_en:string;
+negative_prompt_en:string;
+video_prompt_en:string;
+variations: exactly ${variationCount} items {name,angle,image_prompt,video_prompt};
+creative_score:{total,hook,clarity,brand_fit,platform_fit,conversion,visual_strength,advice_ar}.
+Keep Arabic analysis concise. Keep each prompt detailed but under 900 characters. Use only supported product facts. Never invent claims or packaging text.`;
 
+  const inputTokens=estimateTokens(system+"\n"+context);
+  setStatus(`OpenCode: نحو ${inputTokens.toLocaleString("ar-EG")} token إدخال — إنشاء JSON منظم...`);
+
+  async function ask(messages,max_tokens=5200){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),100000);
+    try{
+      const r=await fetch("/api/opencode",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"chat",model,messages,temperature:.3,max_tokens}),signal:controller.signal});
+      const raw=await r.text();let j;try{j=JSON.parse(raw)}catch{j={error:raw}}
+      if(!r.ok)throw new Error(`OpenCode HTTP ${r.status}: ${j.error?.message||j.error||raw.slice(0,300)}`);
+      const txt=j.choices?.[0]?.message?.content??j.output_text;
+      if(!txt)throw new Error("OpenCode لم يرجع نصًا.");
+      return txt;
+    }catch(e){if(e?.name==="AbortError")throw new Error("OpenCode استغرق أكثر من 100 ثانية. اختر نموذجًا أسرع.");throw e}
+    finally{clearTimeout(timer)}
+  }
+
+  const messages=[{role:"system",content:system},{role:"user",content:context}];
+  let txt=await ask(messages,5200);
+  try{return parseJsonRobust(txt)}catch(e){
+    setStatus("النموذج أعاد JSON غير مكتمل؛ تشغيل إصلاح تلقائي...");
+    const repair=`Repair the following into one VALID JSON object matching the exact schema from the previous system instruction. Preserve useful content, remove commentary, close missing arrays/objects, and return JSON only.\n\nBROKEN OUTPUT:\n${clipText(txt,14000)}`;
+    const fixed=await ask([{role:"system",content:system},{role:"user",content:repair}],4200);
+    try{return parseJsonRobust(fixed)}catch{throw new Error("النموذج فشل في إرجاع JSON صالح حتى بعد محاولة الإصلاح. اختر نموذجًا مجانيًا آخر مثل DeepSeek Flash Free أو Nemotron Lightning Free.")}
+  }
+}
 function renderCampaign(o){
   currentCampaign=o;els.results.style.display="block";$("#campaignTitle").textContent=currentProduct?.title||"Creative Campaign";
   els.summaryOut.textContent=o.product_summary_ar||"";
@@ -700,12 +709,11 @@ async function run(){
 
     const context=buildContext(product,vision,comps);els.rawContext.textContent=`[Estimated input tokens: ${estimateTokens(context).toLocaleString("ar-EG")}]\n\n`+context;
 
-    setStage("strategy","active");setStatus("بناء الزوايا والـHooks والاستراتيجية...");
-    setTimeout(()=>{},100);
-    setStage("story","active");setStatus("إنشاء Storyboard وبرومبتات محسنة...");
-    setStage("prompts","active");
+    setStage("strategy","active");setStatus("OpenCode: بناء الاستراتيجية والزوايا والـHooks والـStoryboard والبرومبتات...");
     const out=await callCreativeAI(context);
-    setStage("strategy","done");setStage("story","done");setStage("prompts","done");
+    setStage("strategy","done");
+    setStage("story","active","تنظيم المشاهد");await new Promise(r=>setTimeout(r,220));setStage("story","done");
+    setStage("prompts","active","تحسين البرومبتات");await new Promise(r=>setTimeout(r,220));setStage("prompts","done");
 
     setStage("score","active");setStatus("حساب Creative Score...");
     renderCampaign(out);setStage("score","done");
