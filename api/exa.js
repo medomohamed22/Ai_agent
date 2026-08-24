@@ -1,4 +1,5 @@
 const EXA_SEARCH_URL = "https://api.exa.ai/search";
+const EXA_CONTENTS_URL = "https://api.exa.ai/contents";
 
 function send(res, status, payload) {
   res.statusCode = status;
@@ -34,38 +35,59 @@ export default async function handler(req, res) {
     return send(res, 400, { error: "Invalid request body" });
   }
 
-  // This endpoint is intentionally limited to Exa Search; it is not a general-purpose proxy.
-  const allowed = {
-    query: body.query,
-    type: body.type,
-    numResults: body.numResults,
-    includeDomains: body.includeDomains,
-    excludeDomains: body.excludeDomains,
-    contents: body.contents,
-    category: body.category,
-    startPublishedDate: body.startPublishedDate,
-    endPublishedDate: body.endPublishedDate,
-    startCrawlDate: body.startCrawlDate,
-    endCrawlDate: body.endCrawlDate,
-    userLocation: body.userLocation,
-  };
-  Object.keys(allowed).forEach((k) => allowed[k] === undefined && delete allowed[k]);
+  const mode = body.mode === "contents" ? "contents" : "search";
+  let upstreamUrl, allowed;
 
-  if (typeof allowed.query !== "string" || !allowed.query.trim() || allowed.query.length > 5000) {
-    return send(res, 400, { error: "Invalid search query" });
-  }
-  if (allowed.numResults != null) {
-    const n = Number(allowed.numResults);
-    if (!Number.isFinite(n) || n < 1 || n > 20) {
-      return send(res, 400, { error: "numResults must be between 1 and 20" });
+  if (mode === "contents") {
+    upstreamUrl = EXA_CONTENTS_URL;
+    const urls = Array.isArray(body.urls) ? body.urls : [];
+    if (urls.length !== 1 || typeof urls[0] !== "string" || urls[0].length > 2048) {
+      return send(res, 400, { error: "Exactly one URL is required" });
     }
-    allowed.numResults = Math.floor(n);
+    let parsed;
+    try { parsed = new URL(urls[0]); }
+    catch { return send(res, 400, { error: "Invalid URL" }); }
+    if (!/^https?:$/.test(parsed.protocol)) return send(res, 400, { error: "Only http/https URLs are allowed" });
+
+    allowed = {
+      urls: [parsed.href],
+      text: body.text ?? true,
+      highlights: body.highlights ?? true,
+      summary: body.summary,
+      maxAgeHours: body.maxAgeHours ?? 0,
+    };
+    Object.keys(allowed).forEach((k) => allowed[k] === undefined && delete allowed[k]);
+  } else {
+    upstreamUrl = EXA_SEARCH_URL;
+    allowed = {
+      query: body.query,
+      type: body.type,
+      numResults: body.numResults,
+      includeDomains: body.includeDomains,
+      excludeDomains: body.excludeDomains,
+      contents: body.contents,
+      category: body.category,
+      startPublishedDate: body.startPublishedDate,
+      endPublishedDate: body.endPublishedDate,
+      startCrawlDate: body.startCrawlDate,
+      endCrawlDate: body.endCrawlDate,
+      userLocation: body.userLocation,
+    };
+    Object.keys(allowed).forEach((k) => allowed[k] === undefined && delete allowed[k]);
+    if (typeof allowed.query !== "string" || !allowed.query.trim() || allowed.query.length > 5000) {
+      return send(res, 400, { error: "Invalid search query" });
+    }
+    if (allowed.numResults != null) {
+      const n = Number(allowed.numResults);
+      if (!Number.isFinite(n) || n < 1 || n > 20) return send(res, 400, { error: "numResults must be between 1 and 20" });
+      allowed.numResults = Math.floor(n);
+    }
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45000);
+  const timer = setTimeout(() => controller.abort(), 60000);
   try {
-    const upstream = await fetch(EXA_SEARCH_URL, {
+    const upstream = await fetch(upstreamUrl, {
       method: "POST",
       headers: {
         "x-api-key": apiKey,
@@ -83,9 +105,7 @@ export default async function handler(req, res) {
     res.setHeader("X-Content-Type-Options", "nosniff");
     return res.end(text);
   } catch (error) {
-    if (error?.name === "AbortError") {
-      return send(res, 504, { error: "Exa request timed out" });
-    }
+    if (error?.name === "AbortError") return send(res, 504, { error: "Exa request timed out" });
     return send(res, 502, { error: "Unable to reach Exa" });
   } finally {
     clearTimeout(timer);
