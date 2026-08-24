@@ -281,7 +281,7 @@ body:not([data-route="studio"]) .stickyGenerate{visibility:hidden!important;poin
           <label>اسم البراند<span class="tinyHelp">البيان الوحيد الإلزامي.</span><input id="brandName"></label>
           <label>وصف قصير<span class="tinyHelp">سطر أو سطرين عن المنتج أو الخدمة، ويمكن تركه مختصرًا جدًا.</span><input id="brandDesc" placeholder="مثال: قهوة مختصة Premium بعبوات زرقاء"></label>
           <div class="brandSourceBox">
-            <div class="sourceRow"><label>موقع أو صفحة سوشيال عامة<span class="tinyHelp">Website / Facebook / Instagram / X. Exa يبحث في الصفحات العامة والمفهرسة ويستخلص النص والصور المتاحة.</span><input id="brandSourceUrl" type="url" placeholder="https://example.com أو رابط الصفحة"></label><button class="btn soft" id="researchBrandSource" type="button">⌕ بحث وفهم الهوية</button></div>
+            <div class="sourceRow"><label>موقع أو صفحة سوشيال عامة<span class="tinyHelp">Website / Facebook / Instagram / X. Exa يقرأ محتوى الرابط نفسه فقط، بدون البحث عن صفحات أو مواقع أخرى.</span><input id="brandSourceUrl" type="url" placeholder="https://example.com أو رابط الصفحة"></label><button class="btn soft" id="researchBrandSource" type="button">⌕ بحث وفهم الهوية</button></div>
             <div class="status" id="brandResearchMsg"></div><div id="brandResearchSummary" class="sourceResults"></div><div id="brandResearchImages" class="sourceImageRow"></div>
             <div class="researchNotice">البحث يمر عبر Vercel Function على نفس الدومين لتجنب CORS. مفتاح Exa يظل محفوظًا محليًا في متصفحك فقط ويُمرَّر مع الطلب دون تخزينه على Vercel. بعض منشورات السوشيال قد لا تكون متاحة إذا كانت خاصة أو غير مفهرسة.</div>
           </div>
@@ -943,11 +943,18 @@ function exaResearchErrorMessage(e){
  if(/Failed to fetch|NetworkError|Load failed|network/i.test(raw))return "تعذر الوصول إلى وسيط Exa على نفس الموقع. تأكد أن المشروع منشور كاملًا على Vercel وأن /api/exa يعمل.";
  return raw.slice(0,350)||"حدث خطأ غير معروف أثناء بحث Exa.";
 }
-async function exaSearchRequest(key,body){
- const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),50000);
+async function exaContentsRequest(key,url){
+ const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),60000);
  try{
-  // Same-origin Vercel Function removes browser CORS problems. The key remains stored only
-  // in this browser and is forwarded transiently with this request; the server does not persist it.
+  // Exact-URL mode: Vercel proxies this single URL to Exa Contents. No web search, no fallback.
+  const body={
+   mode:"contents",
+   urls:[url],
+   text:{maxCharacters:7000},
+   highlights:true,
+   summary:{query:"Summarize only the content present on this exact webpage: brand positioning, products, tone of voice, visual identity, colors, photography, audience and explicit brand claims. Do not infer from other pages or external sources."},
+   maxAgeHours:0
+  };
   const r=await fetch("/api/exa",{method:"POST",cache:"no-store",signal:ctl.signal,headers:{"x-exa-key":key,"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)});
   const text=await r.text();
   if(!r.ok)throw Error(`HTTP ${r.status}: ${text.slice(0,800)}`);
@@ -956,30 +963,21 @@ async function exaSearchRequest(key,body){
 }
 async function researchBrandSource(){
  const url=safeUrl($("#brandSourceUrl").value),key=$("#exaKey").value.trim();if(!url)return status($("#brandResearchMsg"),"أدخل رابطًا صحيحًا يبدأ بـ http/https.","err");if(!key){openDrawer();return status($("#brandResearchMsg"),"أضف Exa API Key من الإعدادات أولًا.","err")}
- const btn=$("#researchBrandSource");btn.disabled=true;setButtonBusy(btn,true,"جاري البحث…");status($("#brandResearchMsg"),"Exa يبحث في المحتوى العام والمفهرس ويستخلص النص والصور…");
+ const btn=$("#researchBrandSource");btn.disabled=true;setButtonBusy(btn,true,"جاري قراءة الرابط…");status($("#brandResearchMsg"),"جاري قراءة محتوى هذا الرابط فقط — بدون البحث عن صفحات أو مواقع أخرى…");
  try{
-  const host=url.hostname.replace(/^www\./,"");
-  const query=`Analyze the public brand identity, products, visual style, tone of voice, campaigns, posts and articles associated with ${url.href}`;
-  const contents={text:{maxCharacters:3500},highlights:true,summary:{query:"Summarize brand positioning, products, tone of voice, visual identity, colors, photography, recurring campaign style, audience and explicit brand claims. Separate facts from interpretation."}};
-  let j;
-  try{j=await exaSearchRequest(key,{query,type:"auto",numResults:6,includeDomains:[host],contents})}
-  catch(firstErr){
-   // Some social/profile URLs are poorly indexed with a strict domain filter. Retry once without it.
-   if(/HTTP 4(00|22)|no results|domain/i.test(String(firstErr?.message||firstErr)))j=await exaSearchRequest(key,{query,type:"auto",numResults:6,contents});
-   else throw firstErr;
+  const j=await exaContentsRequest(key,url.href);
+  const rawResults=Array.isArray(j.results)?j.results:[];
+  const results=rawResults.slice(0,1).map(x=>({title:x.title||"",url:x.url||url.href,publishedDate:x.publishedDate||"",author:x.author||"",image:x.image||"",summary:x.summary||"",highlights:Array.isArray(x.highlights)?x.highlights:[],text:String(x.text||"").slice(0,7000)}));
+  const st=Array.isArray(j.statuses)?j.statuses[0]:null;
+  if(!results.length||(!results[0].text&&!results[0].summary&&!results[0].highlights.length)){
+   const reason=st?.status?` (${st.status})`:"";
+   throw Error(`Exa لم يستطع استخراج محتوى من نفس الرابط${reason}. لن يتم استخدام أي مصدر بديل.`);
   }
-  let results=(j.results||[]).map(x=>({title:x.title||"",url:x.url||"",publishedDate:x.publishedDate||"",author:x.author||"",image:x.image||"",summary:x.summary||"",highlights:Array.isArray(x.highlights)?x.highlights:[],text:String(x.text||"").slice(0,5000)}));
-  if(!results.length){
-   // A valid request can still return no indexed pages. One broader query is more useful than failing silently.
-   j=await exaSearchRequest(key,{query:`${host} brand products visual identity tone campaigns`,type:"auto",numResults:6,contents});
-   results=(j.results||[]).map(x=>({title:x.title||"",url:x.url||"",publishedDate:x.publishedDate||"",author:x.author||"",image:x.image||"",summary:x.summary||"",highlights:Array.isArray(x.highlights)?x.highlights:[],text:String(x.text||"").slice(0,5000)}));
-  }
-  if(!results.length)throw Error("لم يتم العثور على محتوى عام مفهرس لهذا الرابط.");
-  const b=currentBrand();b.sourceUrl=url.href;b.webResearch={searchedAt:new Date().toISOString(),requestId:j.requestId||"",results};$("#brandSourceUrl").value=url.href;
-  // Images are optional: many sites block browser cross-origin downloads. Search text remains usable even if image import fails.
-  const capacity=Math.max(0,5-(currentLogoData?1:0)-currentBrandAssets.length);if(capacity){for(const rr of results.filter(x=>x.image).slice(0,capacity)){const a=await fetchImageAsAsset(rr.image,`Web · ${rr.title||"reference"}`);if(a&&!currentBrandAssets.some(x=>x.sourceUrl===a.sourceUrl))currentBrandAssets.push(a)}}
-  b.brandAssets=currentBrandAssets;saveState();renderBrandResearch();renderBrandAssets();renderCompleteness();updateCompilerCapability();status($("#brandResearchMsg"),`تم حفظ ${results.length} مصادر من Exa${currentBrandAssets.some(a=>a.role==="web-reference")?"، وتم استيراد الصور المتاحة":""}.`,"ok");toast("تم فهم مصدر البراند","success");
- }catch(e){status($("#brandResearchMsg"),"خطأ البحث: "+exaResearchErrorMessage(e),"err")}finally{btn.disabled=false;setButtonBusy(btn,false)}
+  const b=currentBrand();b.sourceUrl=url.href;b.webResearch={searchedAt:new Date().toISOString(),requestId:j.requestId||"",mode:"exact-url",requestedUrl:url.href,results};$("#brandSourceUrl").value=url.href;
+  // Only an image returned with this exact-page result is considered. No images from search results.
+  const capacity=Math.max(0,5-(currentLogoData?1:0)-currentBrandAssets.length);if(capacity&&results[0].image){const a=await fetchImageAsAsset(results[0].image,`Web · ${results[0].title||"reference"}`);if(a&&!currentBrandAssets.some(x=>x.sourceUrl===a.sourceUrl))currentBrandAssets.push(a)}
+  b.brandAssets=currentBrandAssets;saveState();renderBrandResearch();renderBrandAssets();renderCompleteness();updateCompilerCapability();status($("#brandResearchMsg"),`تم استخراج محتوى الرابط المحدد فقط${results[0].image?"، مع الصورة المتاحة من نفس الصفحة":""}.`,"ok");toast("تمت قراءة الرابط نفسه فقط","success");
+ }catch(e){status($("#brandResearchMsg"),"خطأ القراءة: "+exaResearchErrorMessage(e),"err")}finally{btn.disabled=false;setButtonBusy(btn,false)}
 }
 $("#researchBrandSource").onclick=researchBrandSource;
 
