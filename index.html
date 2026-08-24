@@ -283,7 +283,7 @@ body:not([data-route="studio"]) .stickyGenerate{visibility:hidden!important;poin
           <div class="brandSourceBox">
             <div class="sourceRow"><label>موقع أو صفحة سوشيال عامة<span class="tinyHelp">Website / Facebook / Instagram / X. Exa يبحث في الصفحات العامة والمفهرسة ويستخلص النص والصور المتاحة.</span><input id="brandSourceUrl" type="url" placeholder="https://example.com أو رابط الصفحة"></label><button class="btn soft" id="researchBrandSource" type="button">⌕ بحث وفهم الهوية</button></div>
             <div class="status" id="brandResearchMsg"></div><div id="brandResearchSummary" class="sourceResults"></div><div id="brandResearchImages" class="sourceImageRow"></div>
-            <div class="researchNotice">البحث يستخدم طلب Exa واحد لكل ضغطة. بعض منشورات السوشيال قد لا تكون متاحة إذا كانت خاصة، غير مفهرسة، أو تتطلب تسجيل دخول.</div>
+            <div class="researchNotice">البحث يمر عبر Vercel Function على نفس الدومين لتجنب CORS. مفتاح Exa يظل محفوظًا محليًا في متصفحك فقط ويُمرَّر مع الطلب دون تخزينه على Vercel. بعض منشورات السوشيال قد لا تكون متاحة إذا كانت خاصة أو غير مفهرسة.</div>
           </div>
           <div style="grid-column:1/-1">
             <label>اللوجو<span class="tinyHelp">اختياري لكنه مهم لتثبيت الهوية.</span></label>
@@ -491,7 +491,7 @@ body:not([data-route="studio"]) .stickyGenerate{visibility:hidden!important;poin
       </div>
       <div class="drawerGroup">
         <h3>Web Research · Exa</h3>
-        <label>Exa API Key<input id="exaKey" type="password" placeholder="exa-..."></label>
+        <label>Exa API Key<input id="exaKey" type="password" placeholder="exa-..."><span class="tinyHelp">يُحفظ محليًا في هذا المتصفح. عند البحث فقط يُرسل مؤقتًا عبر /api/exa إلى Exa ولا يُخزن على Vercel.</span></label>
         <p class="sub" style="margin:7px 0 0">يستخدمه بحث البراند من الرابط. المفتاح يُحفظ محليًا داخل هذا المتصفح فقط مثل مفاتيح Gemini/OpenRouter، ولا يتم حفظه على Vercel.</p>
       </div>
     </div>
@@ -939,16 +939,16 @@ function exaResearchErrorMessage(e){
  if(/402|payment|credit|billing/i.test(raw))return "حساب Exa يحتاج رصيد/خطة تسمح بالبحث.";
  if(/403|forbidden|permission/i.test(raw))return "Exa رفض الطلب بسبب الصلاحيات. راجع المفتاح والحساب.";
  if(/429|rate.?limit|too many/i.test(raw))return "تم الوصول لحد طلبات Exa مؤقتًا. أعد المحاولة بعد قليل.";
- if(/Failed to fetch|NetworkError|Load failed|network|CORS/i.test(raw)){
-  if(location.protocol==="file:")return "المتصفح منع الاتصال المباشر بـ Exa من ملف file:// (CORS/Origin null). باقي التطبيق يعمل عادي، لكن بحث Exa يحتاج متصفح يسمح بالطلب أو تشغيل الملف عبر localhost/سيرفر صغير.";
-  return "تعذر الاتصال بـ Exa من المتصفح. على Vercel تأكد أن الموقع يعمل عبر HTTPS وأن Exa يسمح بالطلب من Origin الخاص بالدومين.";
- }
+ if(/404.*api\/exa|API route/i.test(raw))return "مسار /api/exa غير موجود في النسخة المنشورة. ارفع المشروع كاملًا على Vercel وليس ملف index.html وحده.";
+ if(/Failed to fetch|NetworkError|Load failed|network/i.test(raw))return "تعذر الوصول إلى وسيط Exa على نفس الموقع. تأكد أن المشروع منشور كاملًا على Vercel وأن /api/exa يعمل.";
  return raw.slice(0,350)||"حدث خطأ غير معروف أثناء بحث Exa.";
 }
 async function exaSearchRequest(key,body){
- const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),45000);
+ const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),50000);
  try{
-  const r=await fetch("https://api.exa.ai/search",{method:"POST",mode:"cors",cache:"no-store",signal:ctl.signal,headers:{"x-api-key":key,"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)});
+  // Same-origin Vercel Function removes browser CORS problems. The key remains stored only
+  // in this browser and is forwarded transiently with this request; the server does not persist it.
+  const r=await fetch("/api/exa",{method:"POST",cache:"no-store",signal:ctl.signal,headers:{"x-exa-key":key,"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)});
   const text=await r.text();
   if(!r.ok)throw Error(`HTTP ${r.status}: ${text.slice(0,800)}`);
   try{return JSON.parse(text)}catch(_){throw Error("Exa رجّع استجابة غير صالحة: "+text.slice(0,250))}
