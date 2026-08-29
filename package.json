@@ -1,0 +1,28 @@
+{
+  "name": "code-surgeon-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.40",
+    "ai": "^7.0.84",
+    "next": "^16.3.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.9.0"
+  }
+}
