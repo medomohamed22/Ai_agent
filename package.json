@@ -1,9 +1,13 @@
 {
   "name": "blueagent-web",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
-  "scripts": {"dev":"vite","build":"vite build","preview":"vite preview"},
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
   "dependencies": {
     "@vercel/sandbox": "latest",
     "@vitejs/plugin-react": "latest",

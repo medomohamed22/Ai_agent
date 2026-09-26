@@ -51,3 +51,15 @@ The API key is stored in browser localStorage in this MVP. For a production mult
 - There is no login/database yet, so projects/messages/provider keys are local to the browser.
 - Provider compatibility depends on proper OpenAI-style tool calling.
 - Do not treat localStorage as secure storage for production secrets.
+
+## V2.1 fixes
+
+- Preview waits until the selected port is actually listening before returning a URL.
+- Plain HTML projects preview automatically with a zero-dependency Node static server; no `package.json` is required.
+- If preview startup fails, its last logs are returned to the Terminal instead of opening a 502 page.
+- Provider API URLs may be entered as a base URL or with `/models`, `/chat/completions`, or `/responses`; BlueAgent normalizes them.
+- Provider 401/403 errors now include a clear API-key/URL hint.
+- A Model ID can be entered manually when a provider does not expose `/models`.
+- Mobile chat composer stays above the bottom navigation and safe-area inset.
+
+For AI tool calling, use an OpenAI-compatible `/chat/completions` endpoint with tool/function calling support. Native provider APIs that do not implement that compatibility layer need a provider-specific adapter.
