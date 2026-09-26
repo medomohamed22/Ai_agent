@@ -63,3 +63,12 @@ The API key is stored in browser localStorage in this MVP. For a production mult
 - Mobile chat composer stays above the bottom navigation and safe-area inset.
 
 For AI tool calling, use an OpenAI-compatible `/chat/completions` endpoint with tool/function calling support. Native provider APIs that do not implement that compatibility layer need a provider-specific adapter.
+
+## V2.2
+- Provider errors preserve the original HTTP status (including 429).
+- Short automatic retry for 429/502/503/504 with Retry-After support.
+- AI chat no longer starts a Vercel Sandbox unless a shell/Git tool actually needs it.
+- Model test button in Settings.
+- Animated AI thinking state.
+- Visual tool activity cards for reading/searching/writing/editing/deleting/running commands/Git.
+- Visual created/updated/deleted file cards.
