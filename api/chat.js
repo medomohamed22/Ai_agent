@@ -5,7 +5,7 @@ const MAX_FILES = 220;
 const MAX_FILE_SIZE = 280_000;
 const ROOT = '/vercel/sandbox/repo';
 
-function cleanBaseUrl(url=''){ return String(url).trim().replace(/\/+$/,''); }
+function apiRoot(url=''){ let u=String(url).trim().replace(/\/+$/,''); return u.replace(/\/(chat\/completions|models|responses)$/i,''); }
 function safePath(p=''){ p=String(p).replace(/\\/g,'/').replace(/^\/+/, ''); if(!p||p.includes('..')||p.includes('\0')) throw new Error('Unsafe path'); return p; }
 function index(files){ return Object.entries(files).slice(0,MAX_FILES).map(([p,c])=>`${p} (${String(c).length} chars)`).join('\n'); }
 function shellQuote(s=''){ return `'${String(s).replace(/'/g, `'"'"'`)}'`; }
@@ -23,9 +23,23 @@ const tools = [
 ];
 
 async function providerRequest(baseUrl,apiKey,body){
-  const r=await fetch(`${cleanBaseUrl(baseUrl)}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',...(apiKey?{Authorization:`Bearer ${apiKey}`}:{})},body:JSON.stringify(body)});
-  const txt=await r.text(); let j; try{j=JSON.parse(txt)}catch{j=null}
-  if(!r.ok) throw new Error(j?.error?.message||j?.message||txt||`Provider error ${r.status}`); return j;
+  const endpoint=`${apiRoot(baseUrl)}/chat/completions`;
+  const request=async payload=>{
+    const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json',...(apiKey?{Authorization:`Bearer ${apiKey}`}:{})},body:JSON.stringify(payload)});
+    const txt=await r.text(); let j; try{j=JSON.parse(txt)}catch{j=null}
+    if(!r.ok){
+      const msg=j?.error?.message||j?.message||txt||`Provider error ${r.status}`;
+      const err=new Error(`${r.status} ${msg}${r.status===401||r.status===403?' — check API key and provider URL.':''}`); err.status=r.status; err.raw=msg; throw err;
+    }
+    return j;
+  };
+  try{return await request(body)}catch(e){
+    // Some OpenAI-compatible providers reject temperature even though they support tools.
+    if(e.status===400 && /temperature|unsupported parameter|unknown parameter/i.test(e.raw||'')){
+      const {temperature,...retry}=body; return await request(retry);
+    }
+    throw e;
+  }
 }
 async function ensureSandbox(name,files){
   let sb=null;
@@ -78,5 +92,5 @@ export default async function handler(req,res){
     }
     if(!finalText) finalText=language==='ar'?'وصل الوكيل إلى حد الخطوات. راجع النتائج واطلب منه الإكمال.':'The agent reached its step limit. Review the result and ask it to continue.';
     return res.json({text:finalText,files,changes,trace,sandboxName:sb.name});
-  }catch(e){ return res.status(500).json({error:e?.message||'Agent failed'}); }
+  }catch(e){ return res.status(e?.status===401||e?.status===403?e.status:502).json({error:e?.message||'Agent failed'}); }
 }
