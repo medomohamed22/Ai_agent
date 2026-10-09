@@ -39,7 +39,7 @@ async function withResume(body, operation) {
     return operation(sb);
   }
 }
-const shell = (sb,command) => exec(sb,'timeout',['45s','bash','-lc',`cd /vercel/sandbox && ${command}`]);
+const shell = (sb,command) => exec(sb,'timeout',['40s','bash','-lc',`cd /vercel/sandbox && ${command}`]);
 function apiFailure(e) {
   const detail = saneText(e?.message || e);
   const status = Number(e?.statusCode || e?.status || e?.response?.status || 0);
@@ -104,6 +104,8 @@ export default async function handler(req,res) {
       return RESP(res,200,{ok:r.exitCode===0,...r});
     }
     if(b.action==='chromium-install') {
+      // Amazon Linux 2023: --with-deps would attempt apt-based Ubuntu dependencies.
+      // Separate npm and Chromium downloads in a bounded operation; timeouts are explicit.
       const r=await withResume(b,sb=>shell(sb,'npm install --no-save playwright && npx playwright install chromium --only-shell'));
       return RESP(res,200,{ok:r.exitCode===0,...r,warning:'Chromium installation can exceed the Hobby memory/time or network allowance.'});
     }
