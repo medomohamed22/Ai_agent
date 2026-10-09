@@ -123,30 +123,42 @@ export default async function handler(req,res) {
       const r=await withResume(b,sb=>exec(sb,'pwsh',['-NoProfile','-NonInteractive','-EncodedCommand',encoded]));
       return RESP(res,200,{ok:r.exitCode===0,...r});
     }
-    if(b.action==='chromium-install') {
-      // Independent toolchain: never place Playwright in a generated project's node_modules.
-      // A later npm install in /vercel/sandbox must not prune the test runner.
-      const r=await withResume(b,async sb=>{
-        // Chromium binary built for AWS Lambda / Amazon Linux 2023.
-        // Keep Playwright in an isolated directory so the project's npm install never removes it.
-        const setup=await shell(sb,`mkdir -p .aiway-tools && npm install --prefix .aiway-tools --no-audit --no-fund --no-save playwright-core@1.56.1 @sparticuz/chromium@141.0.0`);
-        if(setup.exitCode!==0)return {...setup,phase:'npm'};
-        const probe=await chromiumProbe(sb);
-        if(probe.exitCode!==0) {
-          // A working npm package + downloaded browser is not the same as a runnable browser.
-          const diagnostic=await shell(sb,`ldd /tmp/chromium 2>&1 | grep 'not found' | head -20 || true`);
-          return {...probe,phase:'launch',missingLibraries:diagnostic.stdout,installOutput:setup.stdout,browserProvider:'@sparticuz/chromium'};
-        }
-        return {...probe,phase:'launch',installOutput:setup.stdout,browserProvider:'@sparticuz/chromium'};
-      });
-      return RESP(res,200,{ok:r.exitCode===0,...r,notice:r.exitCode===0?'AWS-compatible Chromium and Playwright launched successfully.':'Browser setup did not complete. Read stderr / phase; Check browser launch diagnostics and missingLibraries. The AWS Chromium package is a separate upstream implementation.'});
-    }
-    if(b.action==='chromium') {
-      // Always use the isolated Playwright package. Never resolve from the app being tested.
+    if(b.action==='chromium-install'||b.action==='chromium') {
+      // One backend request owns browser readiness and inspection. The AI must not loop on setup.
+      // Everything is isolated from the generated project's npm dependencies.
+      const isTest=b.action==='chromium';
       const url=String(b.url||'http://127.0.0.1:3000');
-      if(!/^http:\/\/127\.0\.0\.1:3000(?:\/|$)/.test(url))throw Error('Only local sandbox preview allowed');
-      const r=await withResume(b,sb=>exec(sb,'node',['-e',chromiumScript,url],{}));
-      return RESP(res,200,{ok:r.exitCode===0,...r,hint:r.exitCode?'Run cloud_chromium_install once; if launch fails, check missing .so libraries. No installation is attempted during this test.':'Chromium ran and inspected the local preview.'});
+      if(isTest&&!/^http:\/\/127\.0\.0\.1:3000(?:\/|$)/.test(url)) return RESP(res,400,{ok:false,phase:'validation',error:'Only the local sandbox preview is allowed'});
+      const r=await withResume(b,async sb=>{
+        const readiness=await chromiumProbe(sb);
+        let setup=null;
+        if(readiness.exitCode!==0){
+          const present=await shell(sb,'test -d .aiway-tools/node_modules/playwright-core && test -d .aiway-tools/node_modules/@sparticuz/chromium && echo present || true');
+          if(present.stdout.trim()==='present'){
+            const diagnostic=await shell(sb,'if [ -f /tmp/chromium ]; then ldd /tmp/chromium 2>&1 | grep "not found" | head -20; fi; true');
+            return {ok:false,...readiness,phase:'launch',missingLibraries:diagnostic.stdout,remedy:'Packages already installed, browser launch failed. Reinstallation will not fix missing Linux shared libraries.'};
+          }
+          // A previous failed install is not automatically retried forever.
+          const failed=await shell(sb,'test -f .aiway-tools/.install-failed && cat .aiway-tools/.install-failed || true');
+          if(failed.stdout.trim())return {ok:false,exitCode:1,phase:'setup_blocked',stderr:failed.stdout,remedy:'Chromium setup previously failed in this Sandbox. Diagnose the failure or start a fresh Sandbox; automatic retries are disabled.'};
+          // Create a controlled workspace, without modifying the user's package.json.
+          const install=await shell(sb,'mkdir -p .aiway-tools && npm install --prefix .aiway-tools --no-audit --no-fund --no-save playwright-core@1.56.1 @sparticuz/chromium@141.0.0');
+          setup={stdout:install.stdout,stderr:install.stderr,exitCode:install.exitCode};
+          if(install.exitCode!==0){
+            await shell(sb,'mkdir -p .aiway-tools && printf %s "npm setup failed; see installOutput in AiWay" > .aiway-tools/.install-failed');
+            return {ok:false,exitCode:install.exitCode,phase:'install',...install,remedy:'Installation failed. Do not repeatedly retry npm; check Sandbox quota, package compatibility and network.'};
+          }
+        }
+        const probe=setup?await chromiumProbe(sb):readiness;
+        if(probe.exitCode!==0){
+          const diagnostic=await shell(sb,'if [ -f /tmp/chromium ]; then ldd /tmp/chromium 2>&1 | grep "not found" | head -20; fi; true');
+          return {ok:false,...probe,phase:'launch',installOutput:setup,missingLibraries:diagnostic.stdout,remedy:'Browser executable failed to launch. Inspect stderr and missingLibraries; do not reinstall repeatedly.'};
+        }
+        if(!isTest)return {ok:true,...probe,phase:'ready',installedNow:!!setup};
+        const inspection=await exec(sb,'node',['-e',chromiumScript,url]);
+        return {ok:inspection.exitCode===0,...inspection,phase:inspection.exitCode===0?'verified':'page_test',installedNow:!!setup};
+      });
+      return RESP(res,200,{...r,ok:r.ok===true,browserProvider:'@sparticuz/chromium',attemptPolicy:'one setup attempt per sandbox; no agent install/test loop'});
     }
     await (await sandboxFor(b)).stop();return RESP(res,200,{ok:true,stopped:true});
   } catch(e) {const {status,data}=apiFailure(e);return RESP(res,status,data);}
