@@ -17,8 +17,16 @@ const exec = async(sb, cmd, args=[], opt={}) => {
   if(opt.detached) return {started:true};
   return {exitCode:r.exitCode, stdout:saneText(await r.stdout()), stderr:saneText(await r.stderr())};
 };
-function getName(x){if(!/^aiway-[a-zA-Z0-9-]{4,70}$/.test(x||''))throw Error('Sandbox name invalid');return x}
-async function sandboxFor(body) {return await Sandbox.get({ name: getName(body.name) });}
+// SDK v1 exposes sandboxId; newer releases can also expose named sandboxes.
+// Never trust a caller-supplied identifier without checking its format.
+function sandboxIdentity(body) {
+  const id=String(body.sandboxId||body.name||'');
+  if (/^sbx_[a-zA-Z0-9_-]{4,160}$/.test(id)) return {sandboxId:id};
+  if (/^aiway-[a-zA-Z0-9-]{4,70}$/.test(id)) return {name:id};
+  const err=new Error('INVALID_SANDBOX_ID: saved sandbox identifier is missing or invalid; create a fresh sandbox');
+  err.statusCode=422;throw err;
+}
+async function sandboxFor(body) {return Sandbox.get(sandboxIdentity(body));}
 const shell = (sb,command) => exec(sb,'timeout',['45s','bash','-lc',`cd /vercel/sandbox && ${command}`]);
 function apiFailure(e) {
   const detail = saneText(e?.message || e);
@@ -40,12 +48,21 @@ export default async function handler(req,res) {
   const b=req.body||{};
   try {
     if(b.action==='create') {
-      const sb=await Sandbox.create({name:'aiway-'+randomUUID().slice(0,18),persistent:true,runtime:'node24',resources:{vcpus:1},timeout:5*60*1000,ports:[3000]});
-      return RESP(res,200,{ok:true,name:sb.name,limits:{vcpus:1,sessionMinutes:5,files:MAX_FILES,bytes:MAX_BYTES}});
+      const requestedName='aiway-'+randomUUID().slice(0,18);
+      const sb=await Sandbox.create({name:requestedName,persistent:true,runtime:'node24',resources:{vcpus:1},timeout:5*60*1000,ports:[3000]});
+      const sandboxId=typeof sb.sandboxId==='string'?sb.sandboxId:'';
+      const name=typeof sb.name==='string'?sb.name:'';
+      const identity=/^sbx_[a-zA-Z0-9_-]{4,160}$/.test(sandboxId)?sandboxId
+        : /^aiway-[a-zA-Z0-9-]{4,70}$/.test(name)?name:'';
+      if(!identity){await sb.stop().catch(()=>{});throw Error('SDK did not return a usable sandboxId or name; upgrade @vercel/sandbox');}
+      // Probe the VM before telling the frontend creation succeeded.
+      const probe=await exec(sb,'node',['--version']);
+      if(probe.exitCode!==0) {await sb.stop().catch(()=>{});throw Error('SANDBOX_PROBE_FAILED: '+probe.stderr);}
+      return RESP(res,200,{ok:true,name:identity,sandboxId:identity,probe,limits:{vcpus:1,sessionMinutes:5,files:MAX_FILES,bytes:MAX_BYTES}});
     }
     if (!['sync','run','preview','stop','powershell','chromium','chromium-install','status'].includes(b.action)) return RESP(res,400,{error:'Unknown action'});
     const sb=await sandboxFor(b);
-    if(b.action==='status') return RESP(res,200,{ok:true,name:sb.name,status:sb.status||'available'});
+    if(b.action==='status') return RESP(res,200,{ok:true,name:b.sandboxId||b.name,status:sb.status||'available'});
     if(b.action==='sync') {
       const files=validateFiles(b.files);
       await sb.writeFiles(files.map(f=>({path:'/vercel/sandbox/'+f.path,content:Buffer.from(f.content,'utf8')})));
