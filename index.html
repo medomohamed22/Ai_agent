@@ -958,7 +958,7 @@ You have a real project (file list below) and tools. Never put file code in the 
 4. Results omit fields on success (no error / syntax_errors means success); when syntax_errors appear, fix them at once. If an edit fails, use the closest snippet in the error message; never repeat the same call. If a call is cut off by length, write the file in parts: write_file skeleton, then edit_file(after_line,text).
 5. If AGENTS.md exists it holds the project instructions; follow them.
 6. Verification: the system runs verify_code automatically after code changes and reports back only failures; fix them with edit_file. For Python/JS logic write unittest tests and run them with run_code. Call verify_code yourself only to re-check a file.
-7. For cloud runtimes, use cloud_test for build/tests up to 3 rounds (repair files between failed rounds), then cloud_preview. Use cloud_terminal for other commands. Only report real execution when returned success. Cloud tools require configured server secret and Vercel credentials.
+7. Tools are executed by AiWay, NOT by the model itself. Always inspect exitCode, stderr and tool errors. Never claim success from the green tool-call indicator alone. Avoid repeated npm install unless package.json changed. Never call cloud_terminal as a workaround after cloud_test failed due to 504. For cloud runtimes, use cloud_test for build/tests up to 3 rounds (repair files between failed rounds), then cloud_preview. Use cloud_terminal for other commands. Only report real execution when returned success. Cloud tools require configured server secret and Vercel credentials.
 8. To save tokens, file contents you wrote are replaced in history by a one-line summary: never imitate that format, always write full code.
 8. Finish with 2 lines: what you did and how to run it.`;
 const textProto=()=>'### بروتوكول الأدوات النصي\nالأدوات هنا لا تُستدعى تلقائياً. لاستدعاء أداة اكتب في ردك بالضبط:\n<tool_call>{"name":"اسم_الأداة","arguments":{...}}</tool_call>\nثم توقف عن الكتابة وستصلك النتيجة داخل <tool_result>. استخدم JSON صالحاً (اهرب علامات الاقتباس والأسطر \\n داخل النصوص). الأدوات:\n'+enabledTools().map(t=>{const f=t.function;return '- '+f.name+'('+Object.keys(f.parameters.properties||{}).join(', ')+'): '+f.description}).join('\n');
@@ -1368,7 +1368,7 @@ async function send(text,redo){
   let c=chat();if(!c){c={id:uid(),title:'محادثة جديدة',msgs:[]};S.chats.unshift(c);S.cur=c.id}c.mode=S.mode;
   if(!redo){c.msgs.push({role:'user',content:text,files:pend});if(c.msgs.length===1)c.title=(text||pend[0]?.name||'مرفقات').slice(0,40);pend=[];tray()}
   const a={role:'assistant',content:''};c.msgs.push(a);save();draw();msgs.lastElementChild.classList.add('new','gen');if(!redo)msgs.lastElementChild.previousElementSibling?.classList.add('new');const el=msgs.lastElementChild.querySelector('.bub');el.innerHTML=statusHTML(S.searchOn?'search':'think');box.scrollTop=box.scrollHeight;$('#in').value='';fit();
-  ctrl=new AbortController();let TW=null;SEEN.clear();LAST.length=0;REWR.clear();MAPST.msg=null;MAPST.snap=null;CUR={c,a,su:0,ou:0};cpBegin();$('#go').classList.add('stop');
+  ctrl=new AbortController();CLOUD_LOOP_GUARD={calls:0,tests:0,seen:new Map(),halt:'',failures:0};let TW=null;SEEN.clear();LAST.length=0;REWR.clear();MAPST.msg=null;MAPST.snap=null;CUR={c,a,su:0,ou:0};cpBegin();$('#go').classList.add('stop');
   try{
     route(text,c);if(S.mode==='chat'&&!redo){try{await memoryAutoExtract(text)}catch(e){console.warn('auto-memory',e)}}MX.e=MX.cur=S.mode==='multi'?mres('e'):null;let messages=[{role:'system',content:sys()},...trimHist(c.msgs.slice(0,-1),c).map(api)];
     if(S.mode==='chat'){try{const memo=await memoryParts(text);if(memo.stable)messages.splice(1,0,{role:'system',content:memo.stable,_memoryStable:true});if(memo.dynamic)messages.splice(memo.stable?2:1,0,{role:'system',content:memo.dynamic})}catch(e){console.warn('memory context',e)}}
@@ -1403,7 +1403,7 @@ async function send(text,redo){
       maTrace(a,'Executor','running','تنفيذ المهمة');setAgentStatus(el,'think')
     }
     RD.clear();let tl=0,nudges=0;const VS={dirty:false,bad:false,n:0};
-    for(let turn=0;turn<(CODE()?30:(S.searchOn?10:6));turn++){if(S.mode==='multi')await maPauseGate(a);
+    for(let turn=0;turn<(CODE()?30:(S.searchOn?10:6));turn++){if(CLOUD_LOOP_GUARD?.halt){a.content=CLOUD_LOOP_GUARD.halt;break}if(S.mode==='multi')await maPauseGate(a);
       messages[0].content=sys();mapSync(messages);shrink(messages);
       if(S.mode==='multi'&&a.ma){const used=(a.reqs||[]).reduce((s,r)=>s+(Number(r.in)||Number(r.input)||0)+(Number(r.out)||Number(r.output)||0),0);if(used>=mcfg().budget){maTrace(a,'Budget','failed','تجاوزت المهمة ميزانية الـTokens المحددة');a.content='تم إيقاف المزيد من الاستدعاءات بعد تجاوز الميزانية التقديرية. يمكن رفع الحد من إعدادات Multi-Agent. جارٍ حفظ النتائج التي تمت.';break}}
       let started=false;a.content='';const ct=skel();TW?.kill();TW=mkTyper(ct,()=>a.content,()=>{if(near())box.scrollTop=box.scrollHeight});
@@ -1429,6 +1429,7 @@ async function send(text,redo){
           else{rec.ti=(a.todos||[]).findIndex(t=>t.status==='in_progress');(a.acts=a.acts||[]).push(rec);actDone(el.querySelector('.acthost'),rec,turn+'-'+i)}
           if(near())box.scrollTop=box.scrollHeight;
           await sleep(rec.n==='todo_write'?120:40)}
+        if(CLOUD_LOOP_GUARD?.halt){a.content=CLOUD_LOOP_GUARD.halt;ct.innerHTML=md(a.content);break}
         ct.innerHTML=(a.content?md(a.content):'')+statusHTML('think');
         continue;
       }
@@ -2783,8 +2784,10 @@ const cloudData=()=>{try{return JSON.parse(sessionStorage.getItem(CLOUD_CONFIG_K
 const cloudStore=v=>sessionStorage.setItem(CLOUD_CONFIG_KEY,JSON.stringify(v));
 const cloudWorkspaceKey=()=>String(S.ws?.cur||'default');
 const cloudNames=()=>{try{return JSON.parse(localStorage.getItem('aiway_cloud_names_v1')||'{}')}catch{return {}}};
-function cloudSetName(n){const o=cloudNames();o[cloudWorkspaceKey()]=n;localStorage.setItem('aiway_cloud_names_v1',JSON.stringify(o));}
+function cloudSetName(n){const o=cloudNames();if(o[cloudWorkspaceKey()]!==n)cloudInvalidateSync();o[cloudWorkspaceKey()]=n;localStorage.setItem('aiway_cloud_names_v1',JSON.stringify(o));}
 let CLOUD_ATTEMPTS={};
+const CLOUD_SYNC_CACHE=new Map();
+const cloudInvalidateSync=()=>CLOUD_SYNC_CACHE.delete(cloudWorkspaceKey());
 function cloudRounds(){const c=chat?.();const key=cloudWorkspaceKey()+'::'+(c?.id||S.cur||'chat')+'::'+(c?.msgs?.filter(x=>x.role==='user').length||0);return key;}
 async function cloudAPI(action,data={}){
  const token=cloudData().secret;
@@ -2815,21 +2818,33 @@ async function cloudEnsure(){
  return cloudCreate();
 }
 const cloudFiles=async()=>{const all=await fsAll();return all.filter(f=>!/(^|\/)\.env(?:\.|$)/.test(f.path)&&!/(^|\/)(node_modules|\.git)\//.test(f.path)).map(f=>({path:f.path,content:f.content}));};
-async function cloudSync(){
- const files=await cloudFiles();await cloudEnsure();
- if(!files.length)return {ok:true,count:0,message:'Workspace empty; sandbox terminal ready'};
- try{return await cloudAPI('sync',{files})}catch(e){if(!cloudExpired(e))throw e;
-  cloudSetName('');await cloudCreate();return cloudAPI('sync',{files});}
+// Sync only when project files changed. Saves requests, bandwidth and Vercel Function duration.
+async function cloudSync(force=false){
+ const files=await cloudFiles(),id=await cloudEnsure();
+ const digest=h32(files.map(f=>f.path+'\0'+f.content).join('\u0001'));
+ const key=cloudWorkspaceKey(),entry=CLOUD_SYNC_CACHE.get(key);
+ if(!force&&entry?.id===id&&entry?.digest===digest)return {ok:true,count:files.length,unchanged:true};
+ if(!files.length){CLOUD_SYNC_CACHE.set(key,{id,digest});return {ok:true,count:0};}
+ try{
+  const result=await cloudAPI('sync',{files});CLOUD_SYNC_CACHE.set(key,{id,digest});return result;
+ }catch(e){
+  if(!cloudExpired(e))throw e;
+  cloudSetName('');const replacement=await cloudCreate();
+  const result=await cloudAPI('sync',{files});CLOUD_SYNC_CACHE.set(key,{id:replacement,digest});return result;
+ }
 }
-// Only retry commands if Vercel explicitly declares the prior sandbox gone/stopped.
-// File contents are restored from the browser Workspace before retrying.
+// Never automatically replay an arbitrary shell command on 410/504: it may have
+// partially executed already (npm install, migrations or file writes).
+// Recover the sandbox and resync, then return a typed error for the agent.
 async function cloudExecute(action,data={},sync=true){
  if(sync)await cloudSync();else await cloudEnsure();
  try{return await cloudAPI(action,data)}catch(e){
   if(!cloudExpired(e)||action==='stop')throw e;
   cloudSetName('');await cloudCreate();
-  const files=await cloudFiles();if(files.length)await cloudAPI('sync',{files});
-  return cloudAPI(action,data);
+  await cloudSync(true);
+  const error=new Error('انتهت بيئة التنفيذ وتم إنشاء Sandbox جديد ومزامنة الملفات. لم أكرر الأمر تلقائياً لتجنب تنفيذ تغييرات مرتين. راجع حالة الملفات ثم أعد الأمر عند الحاجة.');
+  error.code='SANDBOX_RECOVERED_RETRY_REQUIRED';error.status=409;
+  throw error;
  }
 }
 TOOL_META.push(
@@ -2844,14 +2859,44 @@ toolDefs.cloud_terminal=fd('cloud_terminal','Run real Bash command in a Vercel L
 toolFn.cloud_terminal=async({command})=>{return cloudExecute('run',{command})};
 toolDefs.cloud_powershell=fd('cloud_powershell','Run actual Linux PowerShell (pwsh) in Vercel Sandbox. Only if installed by administrator in prepared sandbox.',{script:{type:'string'},check_installation:{type:'boolean'}},[]);
 toolFn.cloud_powershell=async({script,check_installation})=>{return cloudExecute('powershell',{script,install:!!check_installation})};
-toolDefs.cloud_test=fd('cloud_test','Sync all workspace files and run real build/tests inside Vercel Linux Sandbox. Only THREE test/repair rounds per user request. On test failures edit workspace files before trying again; do not claim success without exitCode 0. Commands e.g. npm install && npm run build, or python3 -m unittest discover.',{command:{type:'string'}},['command']);
-toolFn.cloud_test=async({command})=>{const k=cloudRounds(),n=CLOUD_ATTEMPTS[k]||0;if(n>=3)return {passed:false,limitReached:true,remaining:0,message:'وصلت للحد الأقصى 3 جولات اختبار/إصلاح للطلب الحالي'};const r=await cloudExecute('run',{command});CLOUD_ATTEMPTS[k]=n+1;return {...r,passed:r.exitCode===0,attempt:n+1,remaining:2-n,hint:r.exitCode===0?'التنفيذ نجح؛ هذا لا يضمن نجاح UI بلا اختبار Chromium.':'راجع stderr وعدّل الملفات ثم استخدم جولة الاختبار التالية.'}};
+toolDefs.cloud_test=fd('cloud_test','Sync all workspace files and run real build/tests inside Vercel Linux Sandbox. Only THREE test/repair rounds per user request. Tool outcomes with ok:false or nonzero exitCode mean FAILED; stop on connection errors (504). On test failures edit workspace files before trying again; do not claim success without exitCode 0. Commands e.g. npm install && npm run build, or python3 -m unittest discover.',{command:{type:'string'}},['command']);
+toolFn.cloud_test=async({command})=>{const k=cloudRounds(),n=CLOUD_ATTEMPTS[k]||0;if(n>=3)return {passed:false,limitReached:true,remaining:0,message:'وصلت للحد الأقصى 3 جولات اختبار/إصلاح للطلب الحالي'};CLOUD_ATTEMPTS[k]=n+1;const r=await cloudExecute('run',{command});return {...r,passed:r.exitCode===0,attempt:n+1,remaining:2-n,hint:r.exitCode===0?'التنفيذ نجح؛ هذا لا يضمن نجاح UI بلا اختبار Chromium.':'راجع stderr وعدّل الملفات ثم استخدم جولة الاختبار التالية.'}};
 toolDefs.cloud_preview=fd('cloud_preview','Start project web server on port 3000 inside the Vercel Sandbox and return public live preview URL. React/Vite: npm run dev -- --host 0.0.0.0 --port 3000; Python static: python3 -m http.server 3000 --bind 0.0.0.0. Sandbox expires.',{command:{type:'string'}},['command']);
 toolFn.cloud_preview=async({command})=>{const r=await cloudExecute('preview',{command});cloudShowPreview(r.url);return r};
 toolDefs.cloud_chromium_install=fd('cloud_chromium_install','Install Playwright Chromium dependencies in Sandbox. Heavy operation; use only with explicit user request.',{},[]);
 toolFn.cloud_chromium_install=async()=>{return cloudExecute('chromium-install',{},false)};
 toolDefs.cloud_chromium=fd('cloud_chromium','Run optional real Chromium Playwright smoke check against running local server on port 3000. Requires Playwright and browser installed inside Sandbox first; installation may exceed Hobby budget.',{},[]);
 toolFn.cloud_chromium=async()=>cloudExecute('chromium',{url:'http://127.0.0.1:3000'},false);
+/* Cloud execution circuit breaker: scoped to ONE user request, never resets on a retry. */
+let CLOUD_LOOP_GUARD=null;
+const CLOUD_GUARDED=new Set(['cloud_test','cloud_terminal','cloud_powershell','cloud_preview','cloud_chromium','cloud_chromium_install']);
+const _cloudGuardOriginal=runToolCall;
+runToolCall=async function(tc){
+ const name=tc?.function?.name;
+ if(!CLOUD_GUARDED.has(name)||!ctrl)return _cloudGuardOriginal(tc);
+ const g=CLOUD_LOOP_GUARD||(CLOUD_LOOP_GUARD={calls:0,tests:0,seen:new Map(),halt:'',failures:0});
+ if(g.halt)throw Error(g.halt);
+ const args=tc.function.arguments||'{}';
+ // A repeated command is only meaningful after code changed. Count identical workspace snapshots once.
+ const state=[...FSC.values()].filter(f=>vis(f)).map(f=>f.path+':'+h32(f.content||'')).sort().join('|');
+ const sig=name+'|'+args+'|'+h32(state);
+ const repeats=g.seen.get(sig)||0;
+ if(repeats>=1){g.halt='تم إيقاف الاختبارات السحابية: تكرار نفس الأمر بدون تعديل الملفات. راجع نتيجة الاختبار السابقة وعدّل الكود أو ابدأ طلباً جديداً.';throw Error(g.halt)}
+ if(g.calls>=6){g.halt='تم إيقاف التشغيل السحابي بعد 6 استدعاءات في نفس الطلب لحماية حدود Vercel Hobby. راجع النتائج وابدأ طلباً جديداً عند الحاجة.';throw Error(g.halt)}
+ if(name==='cloud_test'&&g.tests>=3){g.halt='وصلت إلى 3 جولات اختبار سحابية لنفس الطلب. توقفت الاختبارات التلقائية.';throw Error(g.halt)}
+ g.calls++;if(name==='cloud_test')g.tests++;g.seen.set(sig,repeats+1);
+ try{
+  const result=await _cloudGuardOriginal(tc);
+  if(result?.ok===false||result?.exitCode>0){g.failures++;if(g.failures>=2)g.halt='تم إيقاف الحلقة بعد فشل تنفيذ سحابي مرتين. أصلح سبب الفشل قبل إعادة الاختبار.'}
+  else g.failures=0;
+  return result;
+ }catch(e){
+  g.failures++;
+  if(/\b504\b|Cloud API unavailable|gateway timeout|upstream.*timeout|SANDBOX_RECOVERED_RETRY_REQUIRED/i.test(String(e?.message||'')+' '+String(e?.code||''))){g.halt='تعطل اتصال Cloud API أو انتهت مهلة Vercel (HTTP 504). توقفت الأدوات السحابية في هذا الطلب لتفادي التكرار والتكلفة؛ افحص Vercel Logs وأعد المحاولة بطلب جديد بعد التأكد من سلامة الجلسة.'}
+  else if(g.failures>=2)g.halt='فشل اتصال Sandbox مرتين. أوقفت التكرار التلقائي؛ راجع Cloud Terminal وVercel Logs.';
+  throw e;
+ }
+};
 function cloudShowPreview(url){if(!/^https:\/\//.test(url||''))return;let p=document.getElementById('cloud-preview-modal');if(!p){p=document.createElement('div');p.id='cloud-preview-modal';p.style.cssText='position:fixed;inset:3%;z-index:9999;background:var(--bg);border:1px solid var(--line);border-radius:15px;display:flex;flex-direction:column;padding:12px;box-shadow:0 15px 70px #0008';document.body.appendChild(p)}p.replaceChildren();const bar=document.createElement('div');bar.style.cssText='display:flex;align-items:center;gap:12px;margin-bottom:10px;direction:ltr';const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener';link.textContent='Open preview ↗';const close=document.createElement('button');close.textContent='إغلاق ×';close.onclick=()=>p.remove();bar.append(link,close);const frame=document.createElement('iframe');frame.src=url;frame.setAttribute('sandbox','allow-scripts allow-forms allow-same-origin allow-popups');frame.style.cssText='width:100%;flex:1;border:1px solid var(--line);border-radius:10px';frame.title='Live Vercel Sandbox Preview';p.append(bar,frame);}
 function cloudPanel(){if(document.getElementById('cloud-controls'))return;const host=document.createElement('div');host.id='cloud-controls';host.style.cssText='position:fixed;left:14px;bottom:110px;z-index:12;direction:rtl;font-family:inherit';host.innerHTML='<button id="cloud-toggle" style="background:var(--inv);color:var(--invfg);padding:9px 14px;border-radius:14px">☁ Cloud Terminal</button><section id="cloud-contents" hidden style="background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:16px;padding:12px;width:min(370px,90vw);box-shadow:var(--sh);margin-top:6px"><b>Vercel Sandbox — Coding فقط</b><p style="font-size:12px">المفتاح يبقى في ذاكرة التبويب فقط. ابدأ بإنشاء Sandbox.</p><input type="password" id="cloud-secret" placeholder="AIWAY_SANDBOX_SECRET" style="width:100%"><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px"><button class="btn" id="cloud-save">حفظ المفتاح</button><button class="btn" id="cloud-init">إنشاء</button><button class="btn" id="cloud-stop">إيقاف</button></div><input id="cloud-cmd" placeholder="npm test" style="margin-top:8px;width:100%;direction:ltr"><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px"><button class="btn" id="cloud-run">Run Bash</button><button class="btn" id="cloud-web">Preview</button><button class="btn" id="cloud-pwsh">PowerShell</button><button class="btn" id="cloud-browser">Chromium</button><button class="btn" id="cloud-install-pwsh">Install pwsh</button><button class="btn" id="cloud-install-chrome">Install Chromium</button></div><pre id="cloud-output" style="white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto;font:12px monospace;direction:ltr;margin-top:8px"></pre></section>';
  document.body.append(host);const by=id=>host.querySelector('#'+id),output=s=>by('cloud-output').textContent=String(s).slice(-6000);by('cloud-secret').value=cloudData().secret||'';
