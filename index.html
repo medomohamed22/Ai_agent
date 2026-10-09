@@ -2790,17 +2790,17 @@ async function cloudAPI(action,data={}){
  const token=cloudData().secret;
  if(!token)throw Error('أدخل مفتاح Cloud Sandbox من نافذة الإعداد في وضع Coding أولاً.');
  const name=cloudNames()[cloudWorkspaceKey()];
- const r=await fetch('/api/sandbox',{method:'POST',headers:{'Content-Type':'application/json','x-aiway-secret':token},body:JSON.stringify({action,name,...data})});
+ const r=await fetch('/api/sandbox',{method:'POST',headers:{'Content-Type':'application/json','x-aiway-secret':token},body:JSON.stringify({action,sandboxId:name,name,...data})});
  let out;try{out=await r.json()}catch{throw Error('Cloud API unavailable: HTTP '+r.status)}
  if(!r.ok||(out.ok===false&&typeof out.exitCode!=='number')){const msg=out.error||'Cloud API error';const detail=out.detail?'\nالتفاصيل: '+String(out.detail).slice(0,400):'';if(r.status===429)throw Error('تم بلوغ حد معدل الطلبات/الاستهلاك في Vercel Sandbox (429). راجع Usage ولا تكرر الإنشاء الآن. '+msg+detail);if(r.status===401)throw Error('مفتاح AIWAY_SANDBOX_SECRET غير صحيح أو غير مضاف لبيئة النشر. اعمل Redeploy بعد ضبطه.');if(r.status===404)throw Error(msg+' احذف الجلسة القديمة وأعد إنشاءها.'+detail);throw Error(msg+detail)}return out;
 }
 async function cloudEnsure(){
  const old=cloudNames()[cloudWorkspaceKey()];
- if(old){try{await cloudAPI('status');return old}catch(e){if(!/غير متاح|انتهت صلاحيته|404|غير موجود/.test(e.message))throw e;cloudSetName('');}}
- const d=await cloudAPI('create');cloudSetName(d.name);return d.name;
+ if(old){try{await cloudAPI('status');return old}catch(e){if(!/غير متاح|انتهت صلاحيته|404|غير موجود|INVALID_SANDBOX_ID|invalid/i.test(e.message))throw e;cloudSetName('');}}
+ const d=await cloudAPI('create');const identifier=d.sandboxId||d.name;if(!identifier||!d.probe||d.probe.exitCode!==0)throw Error('إنشاء Sandbox لم يُثبت نجاح تشغيل Node فعلياً');cloudSetName(identifier);return identifier;
 }
 async function cloudSync(){const all=await fsAll();const files=all.filter(f=>!/(^|\/)\.env(?:\.|$)/.test(f.path)&&!/(^|\/)(node_modules|\.git)\//.test(f.path)).map(f=>({path:f.path,content:f.content}));
- if(!files.length)throw Error('لا توجد ملفات في مساحة العمل');await cloudEnsure();return cloudAPI('sync',{files});}
+ await cloudEnsure();if(!files.length)return {ok:true,count:0,message:'Workspace empty; sandbox terminal ready'};return cloudAPI('sync',{files});}
 TOOL_META.push(
  {id:'cloud_terminal',name:'Cloud Terminal — Bash',desc:'أوامر حقيقية داخل Vercel Sandbox. متاح فقط مع مفتاح السيرفر.',code:1},
  {id:'cloud_powershell',name:'PowerShell Linux',desc:'تشغيل pwsh حقيقي إذا كان مثبتاً داخل Sandbox.',code:1},
