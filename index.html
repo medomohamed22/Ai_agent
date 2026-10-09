@@ -2792,15 +2792,46 @@ async function cloudAPI(action,data={}){
  const name=cloudNames()[cloudWorkspaceKey()];
  const r=await fetch('/api/sandbox',{method:'POST',headers:{'Content-Type':'application/json','x-aiway-secret':token},body:JSON.stringify({action,sandboxId:name,name,...data})});
  let out;try{out=await r.json()}catch{throw Error('Cloud API unavailable: HTTP '+r.status)}
- if(!r.ok||(out.ok===false&&typeof out.exitCode!=='number')){const msg=out.error||'Cloud API error';const detail=out.detail?'\nالتفاصيل: '+String(out.detail).slice(0,400):'';if(r.status===429)throw Error('تم بلوغ حد معدل الطلبات/الاستهلاك في Vercel Sandbox (429). راجع Usage ولا تكرر الإنشاء الآن. '+msg+detail);if(r.status===401)throw Error('مفتاح AIWAY_SANDBOX_SECRET غير صحيح أو غير مضاف لبيئة النشر. اعمل Redeploy بعد ضبطه.');if(r.status===404)throw Error(msg+' احذف الجلسة القديمة وأعد إنشاءها.'+detail);throw Error(msg+detail)}return out;
+ if(!r.ok||(out.ok===false&&typeof out.exitCode!=='number')){
+  const msg=out.error||'Cloud API error',detail=out.detail?('\nالتفاصيل: '+String(out.detail).slice(0,400)):'';
+  const err=new Error(msg+detail);err.status=r.status;err.code=out.code;err.detail=out.detail;
+  if(r.status===401)err.message='مفتاح AIWAY_SANDBOX_SECRET غير صحيح أو غير مضاف لبيئة النشر.';
+  if(r.status===429)err.message='حد الاستخدام في Vercel Sandbox (429). لا تعيد الإنشاء بصورة متكررة. '+msg+detail;
+  throw err;
+ }
+ return out;
+}
+const cloudExpired=e=>[404,410,422].includes(e?.status)||/SANDBOX_STOPPED|SANDBOX_NOT_FOUND|SNAPSHOT_NOT_FOUND|INVALID_SANDBOX_ID/i.test(String(e?.code||'')+' '+String(e?.detail||''));
+let CLOUD_CREATING=null;
+async function cloudCreate(){
+ if(CLOUD_CREATING)return CLOUD_CREATING;
+ CLOUD_CREATING=(async()=>{const d=await cloudAPI('create');const id=d.name||d.sandboxId;
+  if(!id||!d.probe||d.probe.exitCode!==0)throw Error('فشل اختبار Node أثناء إنشاء Sandbox');cloudSetName(id);return id;})();
+ try{return await CLOUD_CREATING}finally{CLOUD_CREATING=null}
 }
 async function cloudEnsure(){
  const old=cloudNames()[cloudWorkspaceKey()];
- if(old){try{await cloudAPI('status');return old}catch(e){if(!/غير متاح|انتهت صلاحيته|404|غير موجود|INVALID_SANDBOX_ID|invalid/i.test(e.message))throw e;cloudSetName('');}}
- const d=await cloudAPI('create');const identifier=d.sandboxId||d.name;if(!identifier||!d.probe||d.probe.exitCode!==0)throw Error('إنشاء Sandbox لم يُثبت نجاح تشغيل Node فعلياً');cloudSetName(identifier);return identifier;
+ if(old){try{await cloudAPI('status');return old}catch(e){if(!cloudExpired(e))throw e;cloudSetName('');}}
+ return cloudCreate();
 }
-async function cloudSync(){const all=await fsAll();const files=all.filter(f=>!/(^|\/)\.env(?:\.|$)/.test(f.path)&&!/(^|\/)(node_modules|\.git)\//.test(f.path)).map(f=>({path:f.path,content:f.content}));
- await cloudEnsure();if(!files.length)return {ok:true,count:0,message:'Workspace empty; sandbox terminal ready'};return cloudAPI('sync',{files});}
+const cloudFiles=async()=>{const all=await fsAll();return all.filter(f=>!/(^|\/)\.env(?:\.|$)/.test(f.path)&&!/(^|\/)(node_modules|\.git)\//.test(f.path)).map(f=>({path:f.path,content:f.content}));};
+async function cloudSync(){
+ const files=await cloudFiles();await cloudEnsure();
+ if(!files.length)return {ok:true,count:0,message:'Workspace empty; sandbox terminal ready'};
+ try{return await cloudAPI('sync',{files})}catch(e){if(!cloudExpired(e))throw e;
+  cloudSetName('');await cloudCreate();return cloudAPI('sync',{files});}
+}
+// Only retry commands if Vercel explicitly declares the prior sandbox gone/stopped.
+// File contents are restored from the browser Workspace before retrying.
+async function cloudExecute(action,data={},sync=true){
+ if(sync)await cloudSync();else await cloudEnsure();
+ try{return await cloudAPI(action,data)}catch(e){
+  if(!cloudExpired(e)||action==='stop')throw e;
+  cloudSetName('');await cloudCreate();
+  const files=await cloudFiles();if(files.length)await cloudAPI('sync',{files});
+  return cloudAPI(action,data);
+ }
+}
 TOOL_META.push(
  {id:'cloud_terminal',name:'Cloud Terminal — Bash',desc:'أوامر حقيقية داخل Vercel Sandbox. متاح فقط مع مفتاح السيرفر.',code:1},
  {id:'cloud_powershell',name:'PowerShell Linux',desc:'تشغيل pwsh حقيقي إذا كان مثبتاً داخل Sandbox.',code:1},
@@ -2810,17 +2841,17 @@ TOOL_META.push(
  {id:'cloud_chromium',name:'Chromium السحابي',desc:'فحص الصفحة بـ Playwright المثبت اختيارياً في نفس Sandbox.',code:1}
 );
 toolDefs.cloud_terminal=fd('cloud_terminal','Run real Bash command in a Vercel Linux Sandbox, synced workspace first. Server is isolated; shell commands must be limited to the project.',{command:{type:'string'}},['command']);
-toolFn.cloud_terminal=async({command})=>{await cloudSync();return cloudAPI('run',{command})};
+toolFn.cloud_terminal=async({command})=>{return cloudExecute('run',{command})};
 toolDefs.cloud_powershell=fd('cloud_powershell','Run actual Linux PowerShell (pwsh) in Vercel Sandbox. Only if installed by administrator in prepared sandbox.',{script:{type:'string'},check_installation:{type:'boolean'}},[]);
-toolFn.cloud_powershell=async({script,check_installation})=>{await cloudSync();return cloudAPI('powershell',{script,install:!!check_installation})};
+toolFn.cloud_powershell=async({script,check_installation})=>{return cloudExecute('powershell',{script,install:!!check_installation})};
 toolDefs.cloud_test=fd('cloud_test','Sync all workspace files and run real build/tests inside Vercel Linux Sandbox. Only THREE test/repair rounds per user request. On test failures edit workspace files before trying again; do not claim success without exitCode 0. Commands e.g. npm install && npm run build, or python3 -m unittest discover.',{command:{type:'string'}},['command']);
-toolFn.cloud_test=async({command})=>{const k=cloudRounds(),n=CLOUD_ATTEMPTS[k]||0;if(n>=3)return {passed:false,limitReached:true,remaining:0,message:'وصلت للحد الأقصى 3 جولات اختبار/إصلاح للطلب الحالي'};await cloudSync();const r=await cloudAPI('run',{command});CLOUD_ATTEMPTS[k]=n+1;return {...r,passed:r.exitCode===0,attempt:n+1,remaining:2-n,hint:r.exitCode===0?'التنفيذ نجح؛ هذا لا يضمن نجاح UI بلا اختبار Chromium.':'راجع stderr وعدّل الملفات ثم استخدم جولة الاختبار التالية.'}};
+toolFn.cloud_test=async({command})=>{const k=cloudRounds(),n=CLOUD_ATTEMPTS[k]||0;if(n>=3)return {passed:false,limitReached:true,remaining:0,message:'وصلت للحد الأقصى 3 جولات اختبار/إصلاح للطلب الحالي'};const r=await cloudExecute('run',{command});CLOUD_ATTEMPTS[k]=n+1;return {...r,passed:r.exitCode===0,attempt:n+1,remaining:2-n,hint:r.exitCode===0?'التنفيذ نجح؛ هذا لا يضمن نجاح UI بلا اختبار Chromium.':'راجع stderr وعدّل الملفات ثم استخدم جولة الاختبار التالية.'}};
 toolDefs.cloud_preview=fd('cloud_preview','Start project web server on port 3000 inside the Vercel Sandbox and return public live preview URL. React/Vite: npm run dev -- --host 0.0.0.0 --port 3000; Python static: python3 -m http.server 3000 --bind 0.0.0.0. Sandbox expires.',{command:{type:'string'}},['command']);
-toolFn.cloud_preview=async({command})=>{await cloudSync();const r=await cloudAPI('preview',{command});cloudShowPreview(r.url);return r};
+toolFn.cloud_preview=async({command})=>{const r=await cloudExecute('preview',{command});cloudShowPreview(r.url);return r};
 toolDefs.cloud_chromium_install=fd('cloud_chromium_install','Install Playwright Chromium dependencies in Sandbox. Heavy operation; use only with explicit user request.',{},[]);
-toolFn.cloud_chromium_install=async()=>{await cloudEnsure();return cloudAPI('chromium-install')};
+toolFn.cloud_chromium_install=async()=>{return cloudExecute('chromium-install',{},false)};
 toolDefs.cloud_chromium=fd('cloud_chromium','Run optional real Chromium Playwright smoke check against running local server on port 3000. Requires Playwright and browser installed inside Sandbox first; installation may exceed Hobby budget.',{},[]);
-toolFn.cloud_chromium=async()=>cloudAPI('chromium',{url:'http://127.0.0.1:3000'});
+toolFn.cloud_chromium=async()=>cloudExecute('chromium',{url:'http://127.0.0.1:3000'},false);
 function cloudShowPreview(url){if(!/^https:\/\//.test(url||''))return;let p=document.getElementById('cloud-preview-modal');if(!p){p=document.createElement('div');p.id='cloud-preview-modal';p.style.cssText='position:fixed;inset:3%;z-index:9999;background:var(--bg);border:1px solid var(--line);border-radius:15px;display:flex;flex-direction:column;padding:12px;box-shadow:0 15px 70px #0008';document.body.appendChild(p)}p.replaceChildren();const bar=document.createElement('div');bar.style.cssText='display:flex;align-items:center;gap:12px;margin-bottom:10px;direction:ltr';const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener';link.textContent='Open preview ↗';const close=document.createElement('button');close.textContent='إغلاق ×';close.onclick=()=>p.remove();bar.append(link,close);const frame=document.createElement('iframe');frame.src=url;frame.setAttribute('sandbox','allow-scripts allow-forms allow-same-origin allow-popups');frame.style.cssText='width:100%;flex:1;border:1px solid var(--line);border-radius:10px';frame.title='Live Vercel Sandbox Preview';p.append(bar,frame);}
 function cloudPanel(){if(document.getElementById('cloud-controls'))return;const host=document.createElement('div');host.id='cloud-controls';host.style.cssText='position:fixed;left:14px;bottom:110px;z-index:12;direction:rtl;font-family:inherit';host.innerHTML='<button id="cloud-toggle" style="background:var(--inv);color:var(--invfg);padding:9px 14px;border-radius:14px">☁ Cloud Terminal</button><section id="cloud-contents" hidden style="background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:16px;padding:12px;width:min(370px,90vw);box-shadow:var(--sh);margin-top:6px"><b>Vercel Sandbox — Coding فقط</b><p style="font-size:12px">المفتاح يبقى في ذاكرة التبويب فقط. ابدأ بإنشاء Sandbox.</p><input type="password" id="cloud-secret" placeholder="AIWAY_SANDBOX_SECRET" style="width:100%"><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px"><button class="btn" id="cloud-save">حفظ المفتاح</button><button class="btn" id="cloud-init">إنشاء</button><button class="btn" id="cloud-stop">إيقاف</button></div><input id="cloud-cmd" placeholder="npm test" style="margin-top:8px;width:100%;direction:ltr"><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px"><button class="btn" id="cloud-run">Run Bash</button><button class="btn" id="cloud-web">Preview</button><button class="btn" id="cloud-pwsh">PowerShell</button><button class="btn" id="cloud-browser">Chromium</button><button class="btn" id="cloud-install-pwsh">Install pwsh</button><button class="btn" id="cloud-install-chrome">Install Chromium</button></div><pre id="cloud-output" style="white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto;font:12px monospace;direction:ltr;margin-top:8px"></pre></section>';
  document.body.append(host);const by=id=>host.querySelector('#'+id),output=s=>by('cloud-output').textContent=String(s).slice(-6000);by('cloud-secret').value=cloudData().secret||'';
@@ -2828,12 +2859,12 @@ function cloudPanel(){if(document.getElementById('cloud-controls'))return;const 
  by('cloud-save').onclick=()=>{cloudStore({secret:by('cloud-secret').value.trim()});output('تم حفظ المفتاح مؤقتاً في التبويب')};
  const run=async fn=>{if(host.dataset.busy==='1')return;host.dataset.busy='1';try{output('تنفيذ...');const r=await fn();output(JSON.stringify(r,null,2))}catch(e){output('ERROR: '+e.message)}finally{host.dataset.busy='0'}};
  by('cloud-init').onclick=()=>run(async()=>{const name=await cloudEnsure();return {ok:true,name,message:'Sandbox جاهز؛ جرّب Run Bash بالأمر node --version'}});by('cloud-stop').onclick=()=>run(async()=>{const r=await cloudAPI('stop');cloudSetName('');return r});
- by('cloud-run').onclick=()=>run(async()=>{await cloudSync();return cloudAPI('run',{command:by('cloud-cmd').value})});
- by('cloud-web').onclick=()=>run(async()=>{await cloudSync();const r=await cloudAPI('preview',{command:by('cloud-cmd').value||'python3 -m http.server 3000 --bind 0.0.0.0'});cloudShowPreview(r.url);return r});
- by('cloud-pwsh').onclick=()=>run(async()=>{await cloudSync();return cloudAPI('powershell',{script:by('cloud-cmd').value||'$PSVersionTable'})});
- by('cloud-install-pwsh').onclick=()=>run(async()=>{await cloudEnsure();return cloudAPI('powershell',{install:true})});
- by('cloud-install-chrome').onclick=()=>run(async()=>{await cloudEnsure();return cloudAPI('chromium-install')});
- by('cloud-browser').onclick=()=>run(()=>cloudAPI('chromium',{url:'http://127.0.0.1:3000'}));
+ by('cloud-run').onclick=()=>run(async()=>{return cloudExecute('run',{command:by('cloud-cmd').value})});
+ by('cloud-web').onclick=()=>run(async()=>{const r=await cloudExecute('preview',{command:by('cloud-cmd').value||'python3 -m http.server 3000 --bind 0.0.0.0'});cloudShowPreview(r.url);return r});
+ by('cloud-pwsh').onclick=()=>run(async()=>{return cloudExecute('powershell',{script:by('cloud-cmd').value||'$PSVersionTable'})});
+ by('cloud-install-pwsh').onclick=()=>run(async()=>{return cloudExecute('powershell',{install:true},false)});
+ by('cloud-install-chrome').onclick=()=>run(async()=>{return cloudExecute('chromium-install',{},false)});
+ by('cloud-browser').onclick=()=>run(()=>cloudExecute('chromium',{url:'http://127.0.0.1:3000'},false));
 }
 cloudPanel();
 
