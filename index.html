@@ -2876,7 +2876,7 @@ TOOL_META.push(
  {id:'cloud_powershell',name:'PowerShell Linux',desc:'تشغيل pwsh حقيقي إذا كان مثبتاً داخل Sandbox.',code:1},
  {id:'cloud_test',name:'اختبار المشروع سحابياً',desc:'مزامنة ملفات Workspace وتشغيل البناء والاختبارات. بحد أقصى 3 جولات لكل طلب.',code:1},
  {id:'cloud_preview',name:'معاينة سحابية حقيقية',desc:'فتح سيرفر المشروع على منفذ 3000 في Sandbox.',code:1},
- {id:'cloud_chromium_install',name:'تثبيت Chromium',desc:'تثبيت Playwright وChromium على Sandbox (قد يستهلك موارد الخطة المجانية).',code:1},
+ {id:'cloud_chromium_install',name:'تثبيت Chromium',desc:'تجهيز Playwright Core وChromium المتوافق مع Amazon Linux، مع اختبار إطلاق المتصفح.',code:1},
  {id:'cloud_chromium',name:'Chromium السحابي',desc:'فحص الصفحة بـ Playwright المثبت اختيارياً في نفس Sandbox.',code:1}
 );
 toolDefs.cloud_terminal=fd('cloud_terminal','Run real Bash command in a Vercel Linux Sandbox, synced workspace first. Server is isolated; shell commands must be limited to the project.',{command:{type:'string'}},['command']);
@@ -2889,9 +2889,9 @@ toolFn.cloud_test=async({command})=>{const k=cloudRounds(),n=CLOUD_ATTEMPTS[k]||
  let r;if(staged){const one=await cloudExecute('run',{command:segments[0]});if(one.exitCode!==0){r={...one,stage:'dependencies'}}else{const two=await cloudExecute('run',{command:segments[1]});r={...two,stage:'build',installStdout:String(one.stdout||'').slice(-900)}}}else r=await cloudExecute('run',{command});return {...r,passed:r.exitCode===0,attempt:n+1,remaining:2-n,hint:r.exitCode===0?'التنفيذ نجح؛ هذا لا يضمن نجاح UI بلا اختبار Chromium.':'راجع stderr وعدّل الملفات ثم استخدم جولة الاختبار التالية.'}};
 toolDefs.cloud_preview=fd('cloud_preview','Start project web server on port 3000 inside the Vercel Sandbox and return public live preview URL. React/Vite: npm run dev -- --host 0.0.0.0 --port 3000; Python static: python3 -m http.server 3000 --bind 0.0.0.0. Sandbox expires.',{command:{type:'string'}},['command']);
 toolFn.cloud_preview=async({command})=>{const r=await cloudExecute('preview',{command});if(r.ok&&r.url){cloudSavePreview(r.url,command);cloudShowPreview(r.url)}return r};
-toolDefs.cloud_chromium_install=fd('cloud_chromium_install','Install Playwright Chromium dependencies in Sandbox. Heavy operation; use only with explicit user request.',{},[]);
+toolDefs.cloud_chromium_install=fd('cloud_chromium_install','Prepare isolated Playwright Core and AWS-compatible Chromium in Sandbox; perform real headless launch probe. Call once before cloud_chromium when a real browser test was requested. Return exitCode and phase; do not assume success from transport status.',{},[]);
 toolFn.cloud_chromium_install=async()=>{return cloudExecute('chromium-install',{},false)};
-toolDefs.cloud_chromium=fd('cloud_chromium','Run optional real Chromium Playwright smoke check against running local server on port 3000. Requires Playwright and browser installed inside Sandbox first; installation may exceed Hobby budget.',{},[]);
+toolDefs.cloud_chromium=fd('cloud_chromium','Launch real AWS-compatible Chromium via isolated Playwright Core, inspect localhost:3000, return page errors, title, HTTP status. If toolchain missing call cloud_chromium_install once, only retry after successful install.',{},[]);
 toolFn.cloud_chromium=async()=>cloudExecute('chromium',{url:'http://127.0.0.1:3000'},false);
 /* Cloud execution circuit breaker: scoped to ONE user request, never resets on a retry. */
 let CLOUD_LOOP_GUARD=null;
