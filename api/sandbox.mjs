@@ -47,6 +47,24 @@ const browserPayload = (url,steps=[]) => Buffer.from(JSON.stringify({url,steps,v
 async function chromiumProbe(sb) {
   return exec(sb,'node',['-e',chromiumScript,browserPayload('data:text/html,<title>AiWay browser smoke test</title>')]);
 }
+// Browser binaries use NSS libraries that are not bundled in the minimal Amazon Linux image.
+// Install OS packages using Vercel SDK sudo (not apt-get, not arbitrary AI shell input).
+const NSS_LIBRARIES = ['libnspr4.so','libnss3.so','libnssutil3.so'];
+async function browserMissingLibs(sb) {
+  const r=await shell(sb,'if [ -f /tmp/chromium ]; then ldd /tmp/chromium 2>&1 | grep "not found" || true; else echo "Chromium executable not extracted yet"; fi');
+  return r.stdout.trim();
+}
+async function ensureNssLibraries(sb) {
+  const check=await exec(sb,'bash',['-lc', 'ldconfig -p 2>/dev/null | grep -E "lib(nspr4|nss3|nssutil3)\\.so" || true']);
+  const missing=NSS_LIBRARIES.filter(lib=>!check.stdout.includes(lib));
+  if(!missing.length)return {ok:true,installedNow:false,checkedLibraries:NSS_LIBRARIES};
+  // This runs with the documented Sandbox sudo flag; avoid sudo inside a shell command.
+  const install=await exec(sb,'dnf',['install','-y','nspr','nss','nss-util'],{sudo:true});
+  if(install.exitCode!==0)return {ok:false,phase:'system_dependencies',exitCode:install.exitCode,stderr:install.stderr,stdout:install.stdout,missingBefore:missing,remedy:'Vercel Sandbox dnf installation failed; inspect stdout/stderr and permissions. Do not automatically retry.'};
+  const after=await exec(sb,'bash',['-lc','ldconfig -p 2>/dev/null | grep -E "lib(nspr4|nss3|nssutil3)\\.so" || true']);
+  const remaining=NSS_LIBRARIES.filter(lib=>!after.stdout.includes(lib));
+  return {ok:remaining.length===0,phase:'system_dependencies',installedNow:true,exitCode:remaining.length?1:0,missingBefore:missing,missingAfter:remaining,stdout:install.stdout,stderr:install.stderr,remedy:remaining.length?'Packages installed but shared objects were not detected; inspect rpm -ql nspr nss nss-util and ldconfig.':undefined};
+}
 function validateBrowserSteps(steps) {
   if(steps===undefined)return [];
   if(!Array.isArray(steps)||steps.length>8)throw Object.assign(new Error('Up to 8 browser interactions per test'),{statusCode:400});
@@ -151,29 +169,26 @@ export default async function handler(req,res) {
       const url=String(b.url||'http://127.0.0.1:3000');
       if(isTest&&!/^http:\/\/127\.0\.0\.1:3000(?:\/|$)/.test(url)) return RESP(res,400,{ok:false,phase:'validation',error:'Only the local sandbox preview is allowed'});
       const r=await withResume(b,async sb=>{
-        const readiness=await chromiumProbe(sb);
+        // Run setup in a deterministic order. Never label a green API response as browser success.
+        const present=await shell(sb,'test -d .aiway-tools/node_modules/playwright-core && test -d .aiway-tools/node_modules/@sparticuz/chromium && echo present || true');
         let setup=null;
-        if(readiness.exitCode!==0){
-          const present=await shell(sb,'test -d .aiway-tools/node_modules/playwright-core && test -d .aiway-tools/node_modules/@sparticuz/chromium && echo present || true');
-          if(present.stdout.trim()==='present'){
-            const diagnostic=await shell(sb,'if [ -f /tmp/chromium ]; then ldd /tmp/chromium 2>&1 | grep "not found" | head -20; fi; true');
-            return {ok:false,...readiness,phase:'launch',missingLibraries:diagnostic.stdout,remedy:'Packages already installed, browser launch failed. Reinstallation will not fix missing Linux shared libraries.'};
-          }
-          // A previous failed install is not automatically retried forever.
+        if(present.stdout.trim()!=='present'){
           const failed=await shell(sb,'test -f .aiway-tools/.install-failed && cat .aiway-tools/.install-failed || true');
-          if(failed.stdout.trim())return {ok:false,exitCode:1,phase:'setup_blocked',stderr:failed.stdout,remedy:'Chromium setup previously failed in this Sandbox. Diagnose the failure or start a fresh Sandbox; automatic retries are disabled.'};
-          // Create a controlled workspace, without modifying the user's package.json.
+          if(failed.stdout.trim())return {ok:false,exitCode:1,phase:'setup_blocked',stderr:failed.stdout,remedy:'Previous npm setup failed; inspect it before retrying.'};
           const install=await shell(sb,'mkdir -p .aiway-tools && npm install --prefix .aiway-tools --no-audit --no-fund --no-save playwright-core@1.56.1 @sparticuz/chromium@141.0.0');
           setup={stdout:install.stdout,stderr:install.stderr,exitCode:install.exitCode};
           if(install.exitCode!==0){
             await shell(sb,'mkdir -p .aiway-tools && printf %s "npm setup failed; see installOutput in AiWay" > .aiway-tools/.install-failed');
-            return {ok:false,exitCode:install.exitCode,phase:'install',...install,remedy:'Installation failed. Do not repeatedly retry npm; check Sandbox quota, package compatibility and network.'};
+            return {ok:false,phase:'install',...install,remedy:'npm installation failed; do not blindly retry.'};
           }
         }
-        const probe=setup?await chromiumProbe(sb):readiness;
+        // Installed Node packages alone do not imply Linux system libraries are available.
+        const osDependencies=await ensureNssLibraries(sb);
+        if(!osDependencies.ok)return {ok:false,exitCode:osDependencies.exitCode||1,phase:'system_dependencies',osDependencies,stderr:osDependencies.stderr||'Missing NSS libraries'};
+        const probe=await chromiumProbe(sb);
         if(probe.exitCode!==0){
-          const diagnostic=await shell(sb,'if [ -f /tmp/chromium ]; then ldd /tmp/chromium 2>&1 | grep "not found" | head -20; fi; true');
-          return {ok:false,...probe,phase:'launch',installOutput:setup,missingLibraries:diagnostic.stdout,remedy:'Browser executable failed to launch. Inspect stderr and missingLibraries; do not reinstall repeatedly.'};
+          const diagnostic=await browserMissingLibs(sb);
+          return {ok:false,...probe,phase:'launch',installOutput:setup,osDependencies:{installedNow:osDependencies.installedNow},missingLibraries:diagnostic,remedy:'NSS packages were prepared. Check remaining missing libraries and browser crash logs; do not reinstall npm dependencies.'};
         }
         if(!isTest)return {ok:true,...probe,phase:'ready',installedNow:!!setup};
         const inspection=await exec(sb,'node',['-e',chromiumScript,browserPayload(url,steps)]);
