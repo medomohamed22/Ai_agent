@@ -20,7 +20,19 @@ const exec = async(sb, cmd, args=[], opt={}) => {
 function getName(x){if(!/^aiway-[a-zA-Z0-9-]{4,70}$/.test(x||''))throw Error('Sandbox name invalid');return x}
 async function sandboxFor(body) {return await Sandbox.get({ name: getName(body.name) });}
 const shell = (sb,command) => exec(sb,'timeout',['45s','bash','-lc',`cd /vercel/sandbox && ${command}`]);
-const guard = x => {if(typeof x !== 'string'|| x.length>1600||!x.trim()) throw Error('Invalid shell command');return x;};
+function apiFailure(e) {
+  const detail = saneText(e?.message || e);
+  const status = Number(e?.statusCode || e?.status || e?.response?.status || 0);
+  const code = String(e?.code || '');
+  const limited = status === 429 || /(?:^|\D)429(?:\D|$)|rate.limit|quota|too many requests|resource.exhausted/i.test(detail);
+  const auth = status === 401 || status === 403;
+  const notFound = status === 404 || /SANDBOX_NOT_FOUND|SANDBOX_EXPIRED/i.test(code + ' ' + detail);
+  const hint = limited ? 'Vercel Sandbox رفض الطلب بسبب حد الاستخدام/المعدل. افتح Vercel → Usage → Sandboxes، انتظر تجدد الحد، ولا تكرر إنشاء البيئات بسرعة.'
+    : auth ? 'تأكد من تفعيل Sandboxes للمشروع وصلاحيات Vercel/OIDC. AIWAY_SANDBOX_SECRET يحمي موقعك فقط ولا يمنح صلاحيات Vercel.'
+    : notFound ? 'Sandbox غير متاح أو انتهت صلاحيته؛ احذف الجلسة القديمة وأنشئ جلسة واحدة جديدة.'
+    : 'راجع سجلات Functions وSandboxes في لوحة Vercel لمعرفة الخطأ الأصلي.';
+  return { status:limited?429:auth?403:notFound?404:(status>=400&&status<500?status:502), data:{ok:false,error:hint,detail,code,upstreamStatus:status||undefined} };
+}
 export default async function handler(req,res) {
   res.setHeader('Cache-Control','no-store');
   if (req.method !== 'POST') return RESP(res,405,{error:'POST only'});
@@ -31,8 +43,9 @@ export default async function handler(req,res) {
       const sb=await Sandbox.create({name:'aiway-'+randomUUID().slice(0,18),persistent:true,runtime:'node24',resources:{vcpus:1},timeout:5*60*1000,ports:[3000]});
       return RESP(res,200,{ok:true,name:sb.name,limits:{vcpus:1,sessionMinutes:5,files:MAX_FILES,bytes:MAX_BYTES}});
     }
-    if (!['sync','run','preview','stop','powershell','chromium','chromium-install'].includes(b.action)) return RESP(res,400,{error:'Unknown action'});
+    if (!['sync','run','preview','stop','powershell','chromium','chromium-install','status'].includes(b.action)) return RESP(res,400,{error:'Unknown action'});
     const sb=await sandboxFor(b);
+    if(b.action==='status') return RESP(res,200,{ok:true,name:sb.name,status:sb.status||'available'});
     if(b.action==='sync') {
       const files=validateFiles(b.files);
       await sb.writeFiles(files.map(f=>({path:'/vercel/sandbox/'+f.path,content:Buffer.from(f.content,'utf8')})));
@@ -40,7 +53,7 @@ export default async function handler(req,res) {
     }
     if(b.action==='run') {
       const command=validateCommand(b.command);
-      return RESP(res,200,{ok:true,...await shell(sb,command)});
+      const r=await shell(sb,command);return RESP(res,200,{ok:r.exitCode===0,...r});
     }
     if(b.action==='preview') {
       const command=validateCommand(b.command||'python3 -m http.server 3000 --bind 0.0.0.0');
@@ -73,5 +86,5 @@ export default async function handler(req,res) {
       return RESP(res,200,{ok:r.exitCode===0,...r,hint:r.exitCode?'Install playwright and chromium in the sandbox first (npm install playwright && npx playwright install chromium --with-deps). This may exceed Hobby resources.':undefined});
     }
     await sb.stop();return RESP(res,200,{ok:true,stopped:true});
-  } catch(e) {return RESP(res,400,{ok:false,error:saneText(e?.message||e)});}
+  } catch(e) {const {status,data}=apiFailure(e);return RESP(res,status,data);}
 }
