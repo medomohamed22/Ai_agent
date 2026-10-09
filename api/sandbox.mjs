@@ -40,6 +40,19 @@ async function withResume(body, operation) {
   }
 }
 const shell = (sb,command) => exec(sb,'timeout',['48s','bash','-lc',`cd /vercel/sandbox && ${command}`]);
+// Fixed absolute module path avoids MODULE_NOT_FOUND when the generated project re-runs npm install.
+const chromiumScript = String.raw`const {chromium}=require('/vercel/sandbox/.aiway-tools/node_modules/playwright-core');
+const chromiumBinary=require('/vercel/sandbox/.aiway-tools/node_modules/@sparticuz/chromium');
+(async()=>{const browser=await chromium.launch({headless:true,executablePath:await chromiumBinary.executablePath(),args:chromiumBinary.args});
+ try{const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+ const url=process.argv[1]||'data:text/html,<title>AiWay browser smoke test</title>';
+ const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:15000});
+ const data={title:await page.title(),status:response?.status()||200,pageErrors:errors};
+ console.log(JSON.stringify(data)); if(errors.length)process.exitCode=2;
+ }finally{await browser.close()}})().catch(e=>{console.error(e.stack||e);process.exitCode=1})`;
+async function chromiumProbe(sb) {
+  return exec(sb,'node',['-e',chromiumScript,'data:text/html,<title>AiWay browser smoke test</title>'],{});
+}
 function apiFailure(e) {
   const detail = saneText(e?.message || e);
   const status = Number(e?.statusCode || e?.status || e?.response?.status || 0);
@@ -111,18 +124,29 @@ export default async function handler(req,res) {
       return RESP(res,200,{ok:r.exitCode===0,...r});
     }
     if(b.action==='chromium-install') {
-      // Amazon Linux 2023: --with-deps would attempt apt-based Ubuntu dependencies.
-      // Separate npm and Chromium downloads in a bounded operation; timeouts are explicit.
-      const r=await withResume(b,sb=>shell(sb,'npm install --no-save playwright && npx playwright install chromium --only-shell'));
-      return RESP(res,200,{ok:r.exitCode===0,...r,warning:'Chromium installation can exceed the Hobby memory/time or network allowance.'});
+      // Independent toolchain: never place Playwright in a generated project's node_modules.
+      // A later npm install in /vercel/sandbox must not prune the test runner.
+      const r=await withResume(b,async sb=>{
+        // Chromium binary built for AWS Lambda / Amazon Linux 2023.
+        // Keep Playwright in an isolated directory so the project's npm install never removes it.
+        const setup=await shell(sb,`mkdir -p .aiway-tools && npm install --prefix .aiway-tools --no-audit --no-fund --no-save playwright-core@1.56.1 @sparticuz/chromium@141.0.0`);
+        if(setup.exitCode!==0)return {...setup,phase:'npm'};
+        const probe=await chromiumProbe(sb);
+        if(probe.exitCode!==0) {
+          // A working npm package + downloaded browser is not the same as a runnable browser.
+          const diagnostic=await shell(sb,`ldd /tmp/chromium 2>&1 | grep 'not found' | head -20 || true`);
+          return {...probe,phase:'launch',missingLibraries:diagnostic.stdout,installOutput:setup.stdout,browserProvider:'@sparticuz/chromium'};
+        }
+        return {...probe,phase:'launch',installOutput:setup.stdout,browserProvider:'@sparticuz/chromium'};
+      });
+      return RESP(res,200,{ok:r.exitCode===0,...r,notice:r.exitCode===0?'AWS-compatible Chromium and Playwright launched successfully.':'Browser setup did not complete. Read stderr / phase; Check browser launch diagnostics and missingLibraries. The AWS Chromium package is a separate upstream implementation.'});
     }
     if(b.action==='chromium') {
-      // Optional Playwright/Chromium check: explicitly opt in, no automatic download or unlimited installations.
+      // Always use the isolated Playwright package. Never resolve from the app being tested.
       const url=String(b.url||'http://127.0.0.1:3000');
       if(!/^http:\/\/127\.0\.0\.1:3000(?:\/|$)/.test(url))throw Error('Only local sandbox preview allowed');
-      const script="const { chromium } = require('playwright'); (async()=>{ const b=await chromium.launch({headless:true,args:['--no-sandbox']}); const p=await b.newPage(); const errors=[]; p.on('pageerror',e=>errors.push(String(e))); const r=await p.goto(process.argv[1],{waitUntil:'domcontentloaded',timeout:15000}); console.log(JSON.stringify({status:r?.status(),title:await p.title(),errors}));await b.close() })().catch(e=>{console.error(e.stack);process.exit(1)})";
-      const r=await withResume(b,sb=>exec(sb,'node',['-e',script,url]));
-      return RESP(res,200,{ok:r.exitCode===0,...r,hint:r.exitCode?'Install playwright and chromium in the sandbox first (npm install playwright && npx playwright install chromium --only-shell). This may exceed Hobby resources.':undefined});
+      const r=await withResume(b,sb=>exec(sb,'node',['-e',chromiumScript,url],{}));
+      return RESP(res,200,{ok:r.exitCode===0,...r,hint:r.exitCode?'Run cloud_chromium_install once; if launch fails, check missing .so libraries. No installation is attempted during this test.':'Chromium ran and inspected the local preview.'});
     }
     await (await sandboxFor(b)).stop();return RESP(res,200,{ok:true,stopped:true});
   } catch(e) {const {status,data}=apiFailure(e);return RESP(res,status,data);}
