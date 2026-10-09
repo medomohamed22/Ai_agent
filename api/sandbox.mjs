@@ -1,5 +1,6 @@
 import { Sandbox } from '@vercel/sandbox';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { validateFiles, validateCommand, MAX_FILES, MAX_BYTES } from '../lib/validation.mjs';
 
 export const config = { maxDuration: 60 };
@@ -41,17 +42,36 @@ async function withResume(body, operation) {
 }
 const shell = (sb,command) => exec(sb,'timeout',['48s','bash','-lc',`cd /vercel/sandbox && ${command}`]);
 // Fixed absolute module path avoids MODULE_NOT_FOUND when the generated project re-runs npm install.
-const chromiumScript = String.raw`const {chromium}=require('/vercel/sandbox/.aiway-tools/node_modules/playwright-core');
-const chromiumBinary=require('/vercel/sandbox/.aiway-tools/node_modules/@sparticuz/chromium');
-(async()=>{const browser=await chromium.launch({headless:true,executablePath:await chromiumBinary.executablePath(),args:chromiumBinary.args});
- try{const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(String(e)));
- const url=process.argv[1]||'data:text/html,<title>AiWay browser smoke test</title>';
- const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:15000});
- const data={title:await page.title(),status:response?.status()||200,pageErrors:errors};
- console.log(JSON.stringify(data)); if(errors.length)process.exitCode=2;
- }finally{await browser.close()}})().catch(e=>{console.error(e.stack||e);process.exitCode=1})`;
+const chromiumScript = readFileSync(new URL('./browser-audit.cjs', import.meta.url), 'utf8');
+const browserPayload = (url,steps=[]) => Buffer.from(JSON.stringify({url,steps,viewport:{width:390,height:844}})).toString('base64url');
 async function chromiumProbe(sb) {
-  return exec(sb,'node',['-e',chromiumScript,'data:text/html,<title>AiWay browser smoke test</title>'],{});
+  return exec(sb,'node',['-e',chromiumScript,browserPayload('data:text/html,<title>AiWay browser smoke test</title>')]);
+}
+function validateBrowserSteps(steps) {
+  if(steps===undefined)return [];
+  if(!Array.isArray(steps)||steps.length>8)throw Object.assign(new Error('Up to 8 browser interactions per test'),{statusCode:400});
+  return steps.map(s=>{
+    if(!s||!['click','fill','check','assertVisible','assertText'].includes(s.action))throw Object.assign(new Error('Invalid browser action'),{statusCode:400});
+    if(typeof s.selector!=='string'&&typeof s.text!=='string')throw Object.assign(new Error('Selector or text required'),{statusCode:400});
+    const selector=String(s.selector||'').slice(0,160),text=String(s.text||'').slice(0,100);
+    if(/[\r\n]/.test(selector))throw Object.assign(new Error('Invalid selector'),{statusCode:400});
+    return {action:s.action,selector,text,value:String(s.value||'').slice(0,300),timeoutMs:3500};
+  });
+}
+async function browserResult(sb,execution) {
+  const marker='AIWAY_AUDIT_JSON:';
+  const line=execution.stdout.split('\n').find(x=>x.startsWith(marker));
+  let report;
+  try{report=JSON.parse(line.slice(marker.length));}catch{report={ok:false,phase:'launch',error:execution.stderr||execution.stdout||'Browser exited without a report'};}
+  let screenshot;
+  if(report.screenshotCaptured){
+    try { const file=await sb.readFileToBuffer({path:report.screenshotPath});
+      if(file.length<180000)screenshot='data:image/jpeg;base64,'+file.toString('base64');
+      else report.screenshotNote='Screenshot exceeds size limit';
+    }catch(e){report.screenshotNote=String(e.message||e).slice(0,160)}
+  }
+  delete report.screenshotPath;
+  return {ok:execution.exitCode===0&&report.ok===true,exitCode:execution.exitCode,phase:report.phase,report,screenshot};
 }
 function apiFailure(e) {
   const detail = saneText(e?.message || e);
@@ -127,6 +147,7 @@ export default async function handler(req,res) {
       // One backend request owns browser readiness and inspection. The AI must not loop on setup.
       // Everything is isolated from the generated project's npm dependencies.
       const isTest=b.action==='chromium';
+      const steps=validateBrowserSteps(b.steps);
       const url=String(b.url||'http://127.0.0.1:3000');
       if(isTest&&!/^http:\/\/127\.0\.0\.1:3000(?:\/|$)/.test(url)) return RESP(res,400,{ok:false,phase:'validation',error:'Only the local sandbox preview is allowed'});
       const r=await withResume(b,async sb=>{
@@ -155,8 +176,8 @@ export default async function handler(req,res) {
           return {ok:false,...probe,phase:'launch',installOutput:setup,missingLibraries:diagnostic.stdout,remedy:'Browser executable failed to launch. Inspect stderr and missingLibraries; do not reinstall repeatedly.'};
         }
         if(!isTest)return {ok:true,...probe,phase:'ready',installedNow:!!setup};
-        const inspection=await exec(sb,'node',['-e',chromiumScript,url]);
-        return {ok:inspection.exitCode===0,...inspection,phase:inspection.exitCode===0?'verified':'page_test',installedNow:!!setup};
+        const inspection=await exec(sb,'node',['-e',chromiumScript,browserPayload(url,steps)]);
+        return {...(await browserResult(sb,inspection)),installedNow:!!setup};
       });
       return RESP(res,200,{...r,ok:r.ok===true,browserProvider:'@sparticuz/chromium',attemptPolicy:'one setup attempt per sandbox; no agent install/test loop'});
     }
