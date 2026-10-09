@@ -37,3 +37,11 @@
 - https://vercel.com/docs/plans/hobby
 - https://vercel.com/sandbox
 - https://learn.microsoft.com/powershell/scripting/install/install-rhel
+
+## إصلاح أخطاء 429 ورسائل Sandbox (تحديث)
+- `429` في مزوّد النموذج `apodex` **من مزوّد الذكاء الاصطناعي**، وليس من Vercel Sandbox. اختَر موديلًا آخر أو انتظر إعادة فتح الحد عند المزوّد، ثم أعد المحاولة؛ لا توجد حيلة في الـBackend لتجاوز حصص المزوّد.
+- `429` في أدوات Cloud Terminal/Sandbox يعني **رفضًا من Vercel أو إحدى خدمات الـSandbox بسبب الحد**؛ افتح لوحة Vercel → Usage → Sandboxes ثم Function Logs للسبب. لا تكرر الضغط على "إنشاء" أو "Install" أثناء منع الاستخدام، ولا يمكن ضمان تشغيل Sandbox إذا استُنفدت حصة حساب Hobby.
+- الـBackend الآن يعيد أكواد HTTP واضحة وأسبابًا مقروءة مع حالة `status` للـSandbox؛ وبناء/اختبار غير ناجح يعيد `stdout`/`stderr` حتى يقدر وكيل البرمجة يصلح الكود.
+- أداة Cloud Test تحسب جولة الاختبار بعد وصول نتيجة فعلية، وليس عند فشل مزوّد Sandbox بحد الطلبات.
+- اعمل Redeploy بعد تعديل Environment Variables. ابدأ بـ **Create** ثم **Run Bash** واكتب `node --version` قبل تثبيت أدوات كبيرة.
+- **مهم**: إصلاح عرض الأخطاء لا يرفع حدود الخطط المجانية ولا يصلح نقص صلاحيات Vercel تلقائيًا. هذه نسخة إصلاح محلية وتتطلب اختبارات فعلية على حسابك.
