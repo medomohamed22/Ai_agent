@@ -87,7 +87,14 @@ export default async function handler(req,res) {
     }
     if(b.action==='preview') {
       const command=validateCommand(b.command||'python3 -m http.server 3000 --bind 0.0.0.0');
-      const result=await withResume(b,async sb=>({...(await exec(sb,'bash',['-lc',`cd /vercel/sandbox && ${command}`],{detached:true})),url:sb.domain(3000)}));
+      const result=await withResume(b,async sb=>{
+        const url=sb.domain(3000);
+        const host=new URL(url).hostname;
+        // Vite's host allowlist: admit only THIS sandbox preview hostname (never allowedHosts:true).
+        const viteHost=/^[a-z0-9.-]+\.vercel\.run$/i.test(host) ? host : '';
+        const envPrefix=viteHost ? `export __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${JSON.stringify(viteHost)}; ` : '';
+        return {...(await exec(sb,'bash',['-lc',`cd /vercel/sandbox && ${envPrefix}${command}`],{detached:true})),url};
+      });
       return RESP(res,200,{ok:true,...result});
     }
     if(b.action==='powershell') {
