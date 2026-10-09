@@ -242,7 +242,7 @@ header .chip{min-width:0}
 @keyframes agShake{20%,60%{transform:translateX(-4px)}40%,80%{transform:translateX(4px)}}
 @keyframes agGlow{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--good) 22%,transparent)}}
 @keyframes agPop{0%{transform:scale(.4)}70%{transform:scale(1.18)}100%{transform:scale(1)}}
-.acthost:empty,.todohost:empty{display:none}
+.acthost{display:none!important}.acthost:empty,.todohost:empty{display:none}
 .act{display:flex;gap:12px;align-items:flex-start;padding:11px 14px;border:1px solid var(--line);border-radius:16px;margin:6px 0;background:var(--bg);position:relative;overflow:hidden;animation:agIn .4s var(--ease)}
 .act .ai{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:var(--soft);flex:none;position:relative;transition:background .3s,color .3s}
 .act.run .ai::after{content:'';position:absolute;inset:-3px;border-radius:15px;border:2px solid var(--fg);animation:agPulse 1.3s ease-out infinite}
@@ -532,6 +532,11 @@ header .chip{min-width:0}
 /* smart multi-agent activity timeline */
 .matimeline{border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin:8px 0 12px;background:var(--soft);font-size:12.5px}.matop{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}.matop small{color:var(--mut);direction:ltr}.mastage{display:flex;align-items:center;gap:9px;min-height:29px;animation:maAppear .2s ease-out}.mastage small{margin-inline-start:auto;color:var(--mut);max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.madot{width:8px;height:8px;border-radius:50%;background:var(--mut);flex:none}.mastage.done .madot{background:var(--good)}.mastage.failed .madot{background:var(--bad)}.mastage.running .madot{background:var(--fg);animation:maPulse 1.35s ease-in-out infinite}.mapause{border:1px solid var(--line);border-radius:99px;padding:3px 9px;font-size:11px;flex:none}.mapause:hover{border-color:var(--fg)}.matimeline details{border-top:1px dashed var(--line);margin-top:8px;padding-top:6px;color:var(--mut)}.mastats{margin-top:6px}@keyframes maAppear{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes maPulse{50%{opacity:.25;transform:scale(.7)}}@media(prefers-reduced-motion:reduce){.mastage,.mastage.running .madot{animation:none!important}}
 [data-mode=chat] #cloud-controls{display:none!important}
+
+/* AiWay compact progress — tool output stays in the model context, not chat cards */
+.tl .tlt{min-width:0}.tl .tlactivity{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;opacity:.65;line-height:1.6;direction:rtl}.tl.run .tlic{animation:aiwayProgressBreathe 2s ease-in-out infinite}.tl .tlactivity.bad{color:var(--bad);opacity:1}
+.tlb .sb.compact{display:flex;align-items:center;gap:7px;min-height:29px;padding:5px 9px;margin:4px 0;border-radius:9px;font-size:11px;max-width:100%}.tlb .sb.compact>.i{width:14px;height:14px;flex:none}.tlb .sb.compact span{display:flex;gap:5px;align-items:center;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.tlb .sb.compact code{font-size:10px;overflow:hidden;text-overflow:ellipsis;max-width:47vw;white-space:nowrap}.tlb .sb.compact .sbmark{margin-inline-start:auto;width:12px;height:12px}
+@keyframes aiwayProgressBreathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.65;transform:scale(.94)}}@media(prefers-reduced-motion:reduce){.tl.run .tlic{animation:none}}
 </style>
 </head>
 <body>
@@ -807,7 +812,7 @@ function bubble(m){
     if(!fs.children.length)fs.remove();
     if(m.content)d.querySelector('.bub').textContent=m.content;else d.querySelector('.bub').remove();
   }else{
-    d.innerHTML='<div class="tchips">'+(m.tools?.length&&!m.acts?.length?[...new Map(m.tools.map(t=>[t.name,t])).values()].map(t=>'<span class="tchip'+(t.ok?'':' bad')+'"><b class="i '+(t.ok?'i-check':'i-x')+'"></b>'+esc(toolLabel(t.name))+'</span>').join(''):'')+'</div>'+planHTML(m)+(m.todos?.length?todoHTML(m.todos,null,false,m):'')+(m.asks?.length?askSum(m):'')+(m.acts?.length?'<div class=\"acthost\">'+m.acts.map((r,i)=>actHTML(r,'s'+i,true)).join('')+'</div>':'')+'<div class=\"bub\"></div>'+(m.cp?rvCard(m):'')+'<div class="acts"><button data-act="copy" aria-label="نسخ" title="نسخ"><span class="copyico"></span></button><button data-act="speak" aria-label="قراءة الرد" title="قراءة الرد"></button><button data-act="redo" aria-label="إعادة" title="إعادة"></button>'+(m.reqs?.length?'<button data-act="usage" aria-label="الاستهلاك" title="الاستهلاك"></button>':'')+'</div>';
+    d.innerHTML='<div class="tchips" style="display:'+(m.todos?.length?'none':'none')+'">'+(m.tools?.length&&!m.acts?.length?[...new Map(m.tools.map(t=>[t.name,t])).values()].map(t=>'<span class="tchip'+(t.ok?'':' bad')+'"><b class="i '+(t.ok?'i-check':'i-x')+'"></b>'+esc(toolLabel(t.name))+'</span>').join(''):'')+'</div>'+planHTML(m)+(m.todos?.length?todoHTML(m.todos,null,false,m):'')+(m.asks?.length?askSum(m):'')+(m.acts?.length?'<div class=\"acthost\">'+m.acts.map((r,i)=>actHTML(r,'s'+i,true)).join('')+'</div>':'')+'<div class=\"bub\"></div>'+(m.cp?rvCard(m):'')+'<div class="acts"><button data-act="copy" aria-label="نسخ" title="نسخ"><span class="copyico"></span></button><button data-act="speak" aria-label="قراءة الرد" title="قراءة الرد"></button><button data-act="redo" aria-label="إعادة" title="إعادة"></button>'+(m.reqs?.length?'<button data-act="usage" aria-label="الاستهلاك" title="الاستهلاك"></button>':'')+'</div>';
     const row=sourceRow(m.sources,m.searchNote);if(row)d.querySelector('.bub').after(row);
   }
   return d
@@ -943,8 +948,8 @@ function bindChatSearch(){
   q.onsearch=e=>{S.ui.chatQuery=e.target.value;save();list()};
 }
 /* ---------- attachments ---------- */
-let pend=[];async function shrink(f){const bmp=await createImageBitmap(f),k=Math.min(1,1280/Math.max(bmp.width,bmp.height));const cv=document.createElement('canvas');cv.width=Math.round(bmp.width*k);cv.height=Math.round(bmp.height*k);cv.getContext('2d').drawImage(bmp,0,0,cv.width,cv.height);return cv.toDataURL('image/jpeg',.82)}
-async function addFile(f){try{if(f.type.startsWith('image/'))pend.push({name:f.name,type:'image',data:await shrink(f)});else if(f.size>2e6)toast('الملف كبير جداً');else pend.push({name:f.name,type:'text',data:(await f.text()).slice(0,100000)})}catch{toast('تعذّرت قراءة الملف')}}
+let pend=[];async function shrinkImage(f){const bmp=await createImageBitmap(f),k=Math.min(1,1280/Math.max(bmp.width,bmp.height));const cv=document.createElement('canvas');cv.width=Math.round(bmp.width*k);cv.height=Math.round(bmp.height*k);cv.getContext('2d').drawImage(bmp,0,0,cv.width,cv.height);return cv.toDataURL('image/jpeg',.82)}
+async function addFile(f){try{if(f.type.startsWith('image/'))pend.push({name:f.name,type:'image',data:await shrinkImage(f)});else if(f.size>2e6)toast('الملف كبير جداً');else pend.push({name:f.name,type:'text',data:(await f.text()).slice(0,100000)})}catch{toast('تعذّرت قراءة الملف')}}
 function tray(){syncGo();const t=$('#tray');t.innerHTML='';pend.forEach((f,i)=>{const d=document.createElement('div');d.className='pf';if(f.type==='image'){const im=document.createElement('img');im.src=f.data;d.append(im)}else{const s=document.createElement('span');s.className='fc';s.textContent=f.name;d.append(s)}const x=document.createElement('button');x.textContent='✕';x.onclick=()=>{pend.splice(i,1);tray()};d.append(x);t.append(d)})}
 function paintSearch(){const b=$('#srch');if(!b)return;b.classList.toggle('on',!!S.searchOn);b.title=S.searchOn?'بحث الويب مفعّل ('+spName()+')':'بحث الويب متوقف';b.setAttribute('aria-pressed',S.searchOn?'true':'false')}
 $('#srch').onclick=()=>{S.searchOn=!S.searchOn;save();paintSearch();toast(S.searchOn?'تم تفعيل البحث ('+spName()+')':'تم إيقاف البحث')};
@@ -1368,7 +1373,7 @@ async function send(text,redo){
   let c=chat();if(!c){c={id:uid(),title:'محادثة جديدة',msgs:[]};S.chats.unshift(c);S.cur=c.id}c.mode=S.mode;
   if(!redo){c.msgs.push({role:'user',content:text,files:pend});if(c.msgs.length===1)c.title=(text||pend[0]?.name||'مرفقات').slice(0,40);pend=[];tray()}
   const a={role:'assistant',content:''};c.msgs.push(a);save();draw();msgs.lastElementChild.classList.add('new','gen');if(!redo)msgs.lastElementChild.previousElementSibling?.classList.add('new');const el=msgs.lastElementChild.querySelector('.bub');el.innerHTML=statusHTML(S.searchOn?'search':'think');box.scrollTop=box.scrollHeight;$('#in').value='';fit();
-  ctrl=new AbortController();CLOUD_LOOP_GUARD={calls:0,tests:0,seen:new Map(),halt:'',failures:0};let TW=null;SEEN.clear();LAST.length=0;REWR.clear();MAPST.msg=null;MAPST.snap=null;CUR={c,a,su:0,ou:0};cpBegin();$('#go').classList.add('stop');
+  ctrl=new AbortController();CLOUD_LOOP_GUARD={calls:0,tests:0,seen:new Map(),halt:'',failures:0,runtimeRevision:0};let TW=null;SEEN.clear();LAST.length=0;REWR.clear();MAPST.msg=null;MAPST.snap=null;CUR={c,a,su:0,ou:0};cpBegin();$('#go').classList.add('stop');
   try{
     route(text,c);if(S.mode==='chat'&&!redo){try{await memoryAutoExtract(text)}catch(e){console.warn('auto-memory',e)}}MX.e=MX.cur=S.mode==='multi'?mres('e'):null;let messages=[{role:'system',content:sys()},...trimHist(c.msgs.slice(0,-1),c).map(api)];
     if(S.mode==='chat'){try{const memo=await memoryParts(text);if(memo.stable)messages.splice(1,0,{role:'system',content:memo.stable,_memoryStable:true});if(memo.dynamic)messages.splice(memo.stable?2:1,0,{role:'system',content:memo.dynamic})}catch(e){console.warn('memory context',e)}}
@@ -1426,7 +1431,7 @@ async function send(text,redo){
           messages.push({role:'tool',tool_call_id:tc.id,name:tc.function.name,content:JSON.stringify(out)});
           if(rec.n==='todo_write'&&ok)paintTodo(el,a,CUR.prev);
           else if(rec.n==='ask_user'&&ok){}
-          else{rec.ti=(a.todos||[]).findIndex(t=>t.status==='in_progress');(a.acts=a.acts||[]).push(rec);actDone(el.querySelector('.acthost'),rec,turn+'-'+i)}
+          else{rec.ti=(a.todos||[]).findIndex(t=>t.status==='in_progress');(a.acts=a.acts||[]).push(rec);actDone(el.querySelector('.acthost'),rec,turn+'-'+i);refreshTodoActivity(a)}
           if(near())box.scrollTop=box.scrollHeight;
           await sleep(rec.n==='todo_write'?120:40)}
         if(CLOUD_LOOP_GUARD?.halt){a.content=CLOUD_LOOP_GUARD.halt;ct.innerHTML=md(a.content);break}
@@ -1902,13 +1907,18 @@ function actRun(host,calls,turn){if(!host)return;calls.forEach((tc,i)=>{const n=
 function actDone(host,rec,k){if(!host)return;const h=actHTML(rec,k),nd=host.querySelector('[data-k="'+k+'"]');if(nd)nd.outerHTML=h;else host.insertAdjacentHTML('beforeend',h)}
 const TLM=new Map();let tlId=0,tlMsg=null;
 const tlInfo=l=>{const n=l.length,d=l.filter(t=>t.status==='done').length,c=l.find(t=>t.status==='in_progress')||l.find(t=>t.status==='pending');return{n,d,fin:d===n,txt:d===n?'اكتملت الخطة':(c?c.text:'')}};
-function todoHTML(list,prev,anim,msg){const f=tlInfo(list),id=++tlId,p=Math.round(f.d/f.n*100);TLM.set(id,msg);return '<button class="tl '+(f.fin?'fin':'run')+'" data-tl="'+id+'" style="--p:'+p+'%"><span class="tlic"><b class="i i-check"></b></span><span class="tlt"><small>خطة العمل</small><span class="tlx">'+esc(f.txt)+'</span></span><em>'+f.d+'/'+f.n+'</em><i class="tlc"></i><span class="tlbar"><i></i></span></button>'}
+function todoHTML(list,prev,anim,msg){const f=tlInfo(list),id=++tlId,p=Math.round(f.d/f.n*100);TLM.set(id,msg);return '<button class="tl '+(f.fin?'fin':'run')+'" data-tl="'+id+'" style="--p:'+p+'%"><span class="tlic"><b class="i i-check"></b></span><span class="tlt"><small>خطة العمل <span class="tlactivity-count">'+(msg?.acts?.length?' · '+msg.acts.length+' عمليات':'')+'</span></small><span class="tlx">'+esc(f.txt)+'</span><span class="tlactivity" aria-live="polite">'+esc(todoActivity(msg).label)+'</span></span><em>'+f.d+'/'+f.n+'</em><i class="tlc"></i><span class="tlbar"><i></i></span></button>'}
 function paintTodo(el,a,prev){const h=el.querySelector('.todohost');if(!h||!a.todos?.length)return;const b=h.querySelector('.tl');if(!b){h.innerHTML=todoHTML(a.todos,prev,true,a);return}
   const f=tlInfo(a.todos);TLM.set(+b.dataset.tl,a);b.classList.add('swp');
   setTimeout(()=>{b.querySelector('.tlx').textContent=f.txt;b.querySelector('em').textContent=f.d+'/'+f.n;b.style.setProperty('--p',Math.round(f.d/f.n*100)+'%');b.classList.toggle('fin',f.fin);b.classList.toggle('run',!f.fin);b.classList.remove('swp');if(tlMsg===a)tlRender(a)},230)}
 const actName=r=>ACT[r.n]?.[1]||(r.n.startsWith('mcp_')?'أداة خارجية':r.n);
+const compactToolIcon=n=>({read_file:'i-eye',write_file:'i-plus',edit_file:'i-edit',insert_lines:'i-edit',search_files:'i-search',list_files:'i-folder',cloud_terminal:'i-code',cloud_test:'i-check',cloud_preview:'i-eye',cloud_chromium:'i-globe',cloud_chromium_install:'i-down',cloud_powershell:'i-code',verify_code:'i-check',run_code:'i-code'})[n]||'i-code';
+const compactToolText=n=>({read_file:'قراءة',write_file:'كتابة',edit_file:'تعديل',insert_lines:'إدراج',search_files:'بحث',list_files:'ملفات',cloud_terminal:'Terminal',cloud_test:'اختبار',cloud_preview:'معاينة',cloud_chromium:'Chromium',cloud_chromium_install:'تثبيت المتصفح',cloud_powershell:'PowerShell',verify_code:'فحص',run_code:'تشغيل'})[n]||actName({n});
+function todoActivity(msg){const a=msg?.acts||[];const last=a[a.length-1];if(!last)return{label:'جارٍ تجهيز الخطوات…',ok:true,count:0};return{label:compactToolText(last.n)+(last.p?' · '+String(last.p).slice(0,45):''),ok:last.ok&&!last.wn,count:a.length};}
+function refreshTodoActivity(msg){if(!msg)return;for(const [id,m] of TLM){if(m!==msg)continue;const b=document.querySelector('[data-tl="'+id+'"]');if(!b)continue;const a=todoActivity(msg),lab=b.querySelector('.tlactivity');if(lab){lab.textContent=a.label;lab.classList.toggle('bad',!a.ok)}const no=b.querySelector('.tlactivity-count');if(no)no.textContent=a.count?' · '+a.count+' عمليات':'';}if(tlMsg===msg)tlRender(msg)}
+
 function tlRender(m){const L=m.todos||[],A=m.acts||[],N=m.notes||[],f=L.length?tlInfo(L):null,rows=[],CK='<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
-  const sub=r=>'<div class="sb '+(r.ok?'ok':'bad')+'"><b class="i '+(r.ok?'i-check':'i-x')+'"></b><span>'+(r.ok?'':'فشل: ')+esc(actName(r))+(r.p?' <code>'+esc(r.p)+'</code>':'')+'</span></div>';
+  const sub=r=>'<div class="sb compact '+(r.ok&&!r.wn?'ok':'bad')+'"><b class="i '+compactToolIcon(r.n)+'"></b><span>'+esc(compactToolText(r.n))+(r.p?' <code>'+esc(String(r.p).slice(0,70))+'</code>':'')+'</span><b class="i '+(r.ok&&!r.wn?'i-check':'i-x')+' sbmark"></b></div>';
   if(f){rows.push('<div class="tsum"><div class="tn"><b>'+f.d+'</b>/'+f.n+'</div><div class="tm"><div class="tbr"><i style="width:'+Math.round(f.d/f.n*100)+'%"></i></div><small>'+(f.fin?'اكتملت الخطة بنجاح':'جارٍ التنفيذ: '+esc(f.txt))+'</small></div></div>');
     const pre=A.filter(r=>!(r.ti>=0));
     if(pre.length)rows.push('<div class="tp sd"><span class="dt"></span><div class="tt"><div class="tx">تحضير</div>'+pre.map(sub).join('')+'</div></div>');
@@ -2780,8 +2790,8 @@ const _o=setO;setO=function(){_o();const E=ECO(),k=n=>n>=1000?(n/1000).toFixed(1
  $('#ereset').onclick=()=>{TK.i=TK.o=TK.s=TK.n=0;setO()}}}
 /* ===== AiWay Vercel Sandbox cloud execution integration ===== */
 const CLOUD_CONFIG_KEY='aiway_cloud_sandbox_v1';
-const cloudData=()=>{try{return JSON.parse(sessionStorage.getItem(CLOUD_CONFIG_KEY)||'{}')}catch{return {}}};
-const cloudStore=v=>sessionStorage.setItem(CLOUD_CONFIG_KEY,JSON.stringify(v));
+const cloudData=()=>{try{return JSON.parse(localStorage.getItem(CLOUD_CONFIG_KEY)||'{}')}catch{return {}}};
+const cloudStore=v=>localStorage.setItem(CLOUD_CONFIG_KEY,JSON.stringify(v));
 const cloudWorkspaceKey=()=>String(S.ws?.cur||'default');
 const cloudNames=()=>{try{return JSON.parse(localStorage.getItem('aiway_cloud_names_v1')||'{}')}catch{return {}}};
 function cloudSetName(n){const o=cloudNames();if(o[cloudWorkspaceKey()]!==n)cloudInvalidateSync();o[cloudWorkspaceKey()]=n;localStorage.setItem('aiway_cloud_names_v1',JSON.stringify(o));}
@@ -2791,7 +2801,7 @@ const cloudInvalidateSync=()=>CLOUD_SYNC_CACHE.delete(cloudWorkspaceKey());
 function cloudRounds(){const c=chat?.();const key=cloudWorkspaceKey()+'::'+(c?.id||S.cur||'chat')+'::'+(c?.msgs?.filter(x=>x.role==='user').length||0);return key;}
 async function cloudAPI(action,data={}){
  const token=cloudData().secret;
- if(!token)throw Error('أدخل مفتاح Cloud Sandbox من نافذة الإعداد في وضع Coding أولاً.');
+ if(!token)throw Error('أضف مفتاح Cloud Sandbox في الإعدادات ← الأدوات أولاً.');
  const name=cloudNames()[cloudWorkspaceKey()];
  const r=await fetch('/api/sandbox',{method:'POST',headers:{'Content-Type':'application/json','x-aiway-secret':token},body:JSON.stringify({action,sandboxId:name,name,...data})});
  let out;try{out=await r.json()}catch{throw Error('Cloud API unavailable: HTTP '+r.status)}
@@ -2874,12 +2884,12 @@ const _cloudGuardOriginal=runToolCall;
 runToolCall=async function(tc){
  const name=tc?.function?.name;
  if(!CLOUD_GUARDED.has(name)||!ctrl)return _cloudGuardOriginal(tc);
- const g=CLOUD_LOOP_GUARD||(CLOUD_LOOP_GUARD={calls:0,tests:0,seen:new Map(),halt:'',failures:0});
+ const g=CLOUD_LOOP_GUARD||(CLOUD_LOOP_GUARD={calls:0,tests:0,seen:new Map(),halt:'',failures:0,runtimeRevision:0});
  if(g.halt)throw Error(g.halt);
  const args=tc.function.arguments||'{}';
  // A repeated command is only meaningful after code changed. Count identical workspace snapshots once.
  const state=[...FSC.values()].filter(f=>vis(f)).map(f=>f.path+':'+h32(f.content||'')).sort().join('|');
- const sig=name+'|'+args+'|'+h32(state);
+ const sig=name+'|'+args+'|'+h32(state)+'|runtime='+g.runtimeRevision;
  const repeats=g.seen.get(sig)||0;
  if(repeats>=1){g.halt='تم إيقاف الاختبارات السحابية: تكرار نفس الأمر بدون تعديل الملفات. راجع نتيجة الاختبار السابقة وعدّل الكود أو ابدأ طلباً جديداً.';throw Error(g.halt)}
  if(g.calls>=6){g.halt='تم إيقاف التشغيل السحابي بعد 6 استدعاءات في نفس الطلب لحماية حدود Vercel Hobby. راجع النتائج وابدأ طلباً جديداً عند الحاجة.';throw Error(g.halt)}
@@ -2887,31 +2897,37 @@ runToolCall=async function(tc){
  g.calls++;if(name==='cloud_test')g.tests++;g.seen.set(sig,repeats+1);
  try{
   const result=await _cloudGuardOriginal(tc);
+  if(result?.ok===true&&result?.exitCode!==undefined&&result.exitCode===0&&name==='cloud_chromium_install')g.runtimeRevision++;
   if(result?.ok===false||result?.exitCode>0){g.failures++;if(g.failures>=2)g.halt='تم إيقاف الحلقة بعد فشل تنفيذ سحابي مرتين. أصلح سبب الفشل قبل إعادة الاختبار.'}
   else g.failures=0;
   return result;
  }catch(e){
   g.failures++;
   if(/\b504\b|Cloud API unavailable|gateway timeout|upstream.*timeout|SANDBOX_RECOVERED_RETRY_REQUIRED/i.test(String(e?.message||'')+' '+String(e?.code||''))){g.halt='تعطل اتصال Cloud API أو انتهت مهلة Vercel (HTTP 504). توقفت الأدوات السحابية في هذا الطلب لتفادي التكرار والتكلفة؛ افحص Vercel Logs وأعد المحاولة بطلب جديد بعد التأكد من سلامة الجلسة.'}
-  else if(g.failures>=2)g.halt='فشل اتصال Sandbox مرتين. أوقفت التكرار التلقائي؛ راجع Cloud Terminal وVercel Logs.';
+  else if(g.failures>=2)g.halt='فشل اتصال Sandbox مرتين. أوقفت التكرار التلقائي؛ راجع Vercel Logs.';
   throw e;
  }
 };
 function cloudShowPreview(url){if(!/^https:\/\//.test(url||''))return;let p=document.getElementById('cloud-preview-modal');if(!p){p=document.createElement('div');p.id='cloud-preview-modal';p.style.cssText='position:fixed;inset:3%;z-index:9999;background:var(--bg);border:1px solid var(--line);border-radius:15px;display:flex;flex-direction:column;padding:12px;box-shadow:0 15px 70px #0008';document.body.appendChild(p)}p.replaceChildren();const bar=document.createElement('div');bar.style.cssText='display:flex;align-items:center;gap:12px;margin-bottom:10px;direction:ltr';const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener';link.textContent='Open preview ↗';const close=document.createElement('button');close.textContent='إغلاق ×';close.onclick=()=>p.remove();bar.append(link,close);const frame=document.createElement('iframe');frame.src=url;frame.setAttribute('sandbox','allow-scripts allow-forms allow-same-origin allow-popups');frame.style.cssText='width:100%;flex:1;border:1px solid var(--line);border-radius:10px';frame.title='Live Vercel Sandbox Preview';p.append(bar,frame);}
-function cloudPanel(){if(document.getElementById('cloud-controls'))return;const host=document.createElement('div');host.id='cloud-controls';host.style.cssText='position:fixed;left:14px;bottom:110px;z-index:12;direction:rtl;font-family:inherit';host.innerHTML='<button id="cloud-toggle" style="background:var(--inv);color:var(--invfg);padding:9px 14px;border-radius:14px">☁ Cloud Terminal</button><section id="cloud-contents" hidden style="background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:16px;padding:12px;width:min(370px,90vw);box-shadow:var(--sh);margin-top:6px"><b>Vercel Sandbox — Coding فقط</b><p style="font-size:12px">المفتاح يبقى في ذاكرة التبويب فقط. ابدأ بإنشاء Sandbox.</p><input type="password" id="cloud-secret" placeholder="AIWAY_SANDBOX_SECRET" style="width:100%"><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px"><button class="btn" id="cloud-save">حفظ المفتاح</button><button class="btn" id="cloud-init">إنشاء</button><button class="btn" id="cloud-stop">إيقاف</button></div><input id="cloud-cmd" placeholder="npm test" style="margin-top:8px;width:100%;direction:ltr"><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px"><button class="btn" id="cloud-run">Run Bash</button><button class="btn" id="cloud-web">Preview</button><button class="btn" id="cloud-pwsh">PowerShell</button><button class="btn" id="cloud-browser">Chromium</button><button class="btn" id="cloud-install-pwsh">Install pwsh</button><button class="btn" id="cloud-install-chrome">Install Chromium</button></div><pre id="cloud-output" style="white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto;font:12px monospace;direction:ltr;margin-top:8px"></pre></section>';
- document.body.append(host);const by=id=>host.querySelector('#'+id),output=s=>by('cloud-output').textContent=String(s).slice(-6000);by('cloud-secret').value=cloudData().secret||'';
- by('cloud-toggle').onclick=()=>by('cloud-contents').hidden=!by('cloud-contents').hidden;
- by('cloud-save').onclick=()=>{cloudStore({secret:by('cloud-secret').value.trim()});output('تم حفظ المفتاح مؤقتاً في التبويب')};
- const run=async fn=>{if(host.dataset.busy==='1')return;host.dataset.busy='1';try{output('تنفيذ...');const r=await fn();output(JSON.stringify(r,null,2))}catch(e){output('ERROR: '+e.message)}finally{host.dataset.busy='0'}};
- by('cloud-init').onclick=()=>run(async()=>{const name=await cloudEnsure();return {ok:true,name,message:'Sandbox جاهز؛ جرّب Run Bash بالأمر node --version'}});by('cloud-stop').onclick=()=>run(async()=>{const r=await cloudAPI('stop');cloudSetName('');return r});
- by('cloud-run').onclick=()=>run(async()=>{return cloudExecute('run',{command:by('cloud-cmd').value})});
- by('cloud-web').onclick=()=>run(async()=>{const r=await cloudExecute('preview',{command:by('cloud-cmd').value||'python3 -m http.server 3000 --bind 0.0.0.0'});cloudShowPreview(r.url);return r});
- by('cloud-pwsh').onclick=()=>run(async()=>{return cloudExecute('powershell',{script:by('cloud-cmd').value||'$PSVersionTable'})});
- by('cloud-install-pwsh').onclick=()=>run(async()=>{return cloudExecute('powershell',{install:true},false)});
- by('cloud-install-chrome').onclick=()=>run(async()=>{return cloudExecute('chromium-install',{},false)});
- by('cloud-browser').onclick=()=>run(()=>cloudExecute('chromium',{url:'http://127.0.0.1:3000'},false));
-}
-cloudPanel();
+// Terminal is intentionally agent-only. The secret stays in local browser storage;
+// project administrators still configure the same secret in Vercel environment variables.
+const _cloudSettingsBase=setO;
+setO=function(){
+ _cloudSettingsBase();
+ const parent=document.getElementById('to');if(!parent)return;
+ const item=document.createElement('div');item.className='acc open';item.id='cloud-agent-settings';
+ item.innerHTML=`<div class="acch"><b>☁ Vercel Sandbox — أدوات الوكيل</b></div>
+  <div class="accb" style="display:flex">
+  <div class="note">الـAI يستخدم Bash وPowerShell وChromium واختبارات Cloud مباشرة في وضع Coding فقط. لا توجد نافذة Terminal يدوية.</div>
+  <label>مفتاح AIWAY_SANDBOX_SECRET<input type="password" id="cloud-settings-secret" autocomplete="off" placeholder="مفتاح Vercel Sandbox"></label>
+  <div class="row"><button type="button" class="btn pri" id="cloud-settings-save">حفظ المفتاح محليًا</button><button type="button" class="btn" id="cloud-settings-clear">مسح المفتاح</button></div>
+  <div class="note">يُحفظ المفتاح في localStorage على هذا المتصفح فقط، ولا يُضاف لملفات المشروع أو لطلبات النموذج. التخزين المحلي قابل للقراءة من JavaScript على نفس النطاق، فلا تستخدمه على جهاز مشترك.</div>
+  <span id="cloud-settings-status" class="msg"></span></div>`;
+ parent.append(item);
+ const field=item.querySelector('#cloud-settings-secret'),status=item.querySelector('#cloud-settings-status');field.value=cloudData().secret||'';
+ item.querySelector('#cloud-settings-save').onclick=()=>{const value=field.value.trim();if(value.length<24){status.textContent='المفتاح لازم يكون 24 حرفًا على الأقل';return}cloudStore({secret:value});status.textContent='تم حفظ المفتاح محليًا. الوكيل سيستخدمه عند طلب أدوات Cloud.'};
+ item.querySelector('#cloud-settings-clear').onclick=()=>{cloudStore({});field.value='';status.textContent='تم مسح المفتاح من هذا المتصفح'};
+};
 
 </script>
 </body>
