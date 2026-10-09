@@ -91,6 +91,36 @@ async function browserResult(sb,execution) {
   delete report.screenshotPath;
   return {ok:execution.exitCode===0&&report.ok===true,exitCode:execution.exitCode,phase:report.phase,report,screenshot};
 }
+// A detached process is not proof the server is listening. Reuse healthy servers,
+// otherwise start a fresh one and probe from INSIDE the same microVM.
+const sleep = ms => new Promise(resolve=>setTimeout(resolve,ms));
+async function previewProbe(sb) {
+  const check=await exec(sb,'node',['-e',
+    'const http=require("node:http");const req=http.get("http://127.0.0.1:3000/",{timeout:2500},r=>{r.resume();console.log("HTTP_STATUS="+r.statusCode);process.exit(r.statusCode>=500?2:0)});req.on("error",e=>{console.error(e.code||e.message);process.exit(1)});req.on("timeout",()=>req.destroy(new Error("timeout")))'
+  ]);
+  return {...check,ready:check.exitCode===0};
+}
+async function ensurePreview(sb,command) {
+  const url=sb.domain(3000);
+  let probe=await previewProbe(sb);
+  if(probe.ready)return {ok:true,url,ready:true,reused:true,http:probe.stdout.trim()};
+  const host=new URL(url).hostname;
+  const safeHost=/^[a-z0-9.-]+\.vercel\.run$/i.test(host)?host:'';
+  const envPrefix=safeHost ? `export __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${JSON.stringify(safeHost)}; ` : '';
+  // Preview commands are validated; command runs only in an isolated sandbox.
+  const launch=await exec(sb,'bash',['-lc',`cd /vercel/sandbox && ${envPrefix}exec ${command}`],{detached:true});
+  for(let attempt=0;attempt<12;attempt++){
+    await sleep(850);
+    probe=await previewProbe(sb);
+    if(probe.ready)return {ok:true,url,ready:true,reused:false,http:probe.stdout.trim()};
+  }
+  const diagnostics=await exec(sb,'bash',['-lc','ps -ef | grep -E "vite|http.server|next|node" | grep -v grep | tail -12 || true']);
+  return {ok:false,phase:'preview_not_listening',ready:false,exitCode:1,
+    error:'Preview server did not start listening on port 3000',
+    stderr:(probe.stderr||'')+'\n'+diagnostics.stdout,
+    hint:'Check package scripts, dependencies and server port. No preview URL is presented as ready.'};
+}
+
 function apiFailure(e) {
   const detail = saneText(e?.message || e);
   const status = Number(e?.statusCode || e?.status || e?.response?.status || 0);
@@ -138,15 +168,8 @@ export default async function handler(req,res) {
     }
     if(b.action==='preview') {
       const command=validateCommand(b.command||'python3 -m http.server 3000 --bind 0.0.0.0');
-      const result=await withResume(b,async sb=>{
-        const url=sb.domain(3000);
-        const host=new URL(url).hostname;
-        // Vite's host allowlist: admit only THIS sandbox preview hostname (never allowedHosts:true).
-        const viteHost=/^[a-z0-9.-]+\.vercel\.run$/i.test(host) ? host : '';
-        const envPrefix=viteHost ? `export __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${JSON.stringify(viteHost)}; ` : '';
-        return {...(await exec(sb,'bash',['-lc',`cd /vercel/sandbox && ${envPrefix}${command}`],{detached:true})),url};
-      });
-      return RESP(res,200,{ok:true,...result});
+      const result=await withResume(b,sb=>ensurePreview(sb,command));
+      return RESP(res,200,result);
     }
     if(b.action==='powershell') {
       // Install only on user request. Availability depends on the current Linux image.
@@ -169,6 +192,14 @@ export default async function handler(req,res) {
       const url=String(b.url||'http://127.0.0.1:3000');
       if(isTest&&!/^http:\/\/127\.0\.0\.1:3000(?:\/|$)/.test(url)) return RESP(res,400,{ok:false,phase:'validation',error:'Only the local sandbox preview is allowed'});
       const r=await withResume(b,async sb=>{
+        if(isTest){
+          let preview=await previewProbe(sb);
+          if(!preview.ready){
+            const startCmd=String(b.previewCommand||'').trim() || 'if [ -f package.json ]; then npm run dev -- --host 0.0.0.0 --port 3000; else python3 -m http.server 3000 --bind 0.0.0.0; fi';
+            const restarted=await ensurePreview(sb,validateCommand(startCmd));
+            if(!restarted.ok)return {ok:false,exitCode:1,phase:'preview_not_listening',stderr:restarted.stderr,error:restarted.error};
+          }
+        }
         // Run setup in a deterministic order. Never label a green API response as browser success.
         const present=await shell(sb,'test -d .aiway-tools/node_modules/playwright-core && test -d .aiway-tools/node_modules/@sparticuz/chromium && echo present || true');
         let setup=null;
