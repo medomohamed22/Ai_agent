@@ -537,6 +537,18 @@ header .chip{min-width:0}
 .tl .tlt{min-width:0}.tl .tlactivity{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;opacity:.65;line-height:1.6;direction:rtl}.tl.run .tlic{animation:aiwayProgressBreathe 2s ease-in-out infinite}.tl .tlactivity.bad{color:var(--bad);opacity:1}
 .tlb .sb.compact{display:flex;align-items:center;gap:7px;min-height:29px;padding:5px 9px;margin:4px 0;border-radius:9px;font-size:11px;max-width:100%}.tlb .sb.compact>.i{width:14px;height:14px;flex:none}.tlb .sb.compact span{display:flex;gap:5px;align-items:center;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.tlb .sb.compact code{font-size:10px;overflow:hidden;text-overflow:ellipsis;max-width:47vw;white-space:nowrap}.tlb .sb.compact .sbmark{margin-inline-start:auto;width:12px;height:12px}
 @keyframes aiwayProgressBreathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.65;transform:scale(.94)}}@media(prefers-reduced-motion:reduce){.tl.run .tlic{animation:none}}
+
+/* Compact idle/task feedback + workspace preview */
+.agentstatus{border:1px solid var(--line);border-radius:15px;background:var(--soft);padding:9px 13px;max-width:100%;width:fit-content;gap:10px;animation:aiFadeIn .28s ease-out}
+.agentstatus .pulsebar i{border-radius:5px;animation-duration:1.25s}
+.agentstatus .statuslabel{max-width:min(66vw,360px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes aiFadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.cloud-preview-overlay{position:fixed;inset:12px;inset-block-start:max(12px,env(safe-area-inset-top));inset-block-end:max(12px,env(safe-area-inset-bottom));z-index:9999;background:var(--bg);border:1px solid var(--line);border-radius:20px;display:flex;flex-direction:column;padding:10px;box-shadow:0 20px 70px #0006;animation:aiFadeIn .25s ease-out}
+.cloud-preview-bar{display:flex;align-items:center;gap:9px;padding:5px 6px 12px;flex-wrap:wrap}
+.cloud-preview-bar b{flex:1;min-width:90px;font-size:14px}.cloud-preview-bar a,.cloud-preview-bar button{color:var(--fg);background:var(--soft);text-decoration:none;padding:7px 12px;border:1px solid var(--line);border-radius:11px;font-size:13px}
+.cloud-preview-overlay iframe{width:100%;flex:1;min-height:0;border:1px solid var(--line);border-radius:12px;background:white}
+.fmbar{flex-wrap:wrap}
+@media(prefers-reduced-motion:reduce){.agentstatus,.cloud-preview-overlay{animation:none!important}}
 </style>
 </head>
 <body>
@@ -1427,6 +1439,7 @@ async function send(text,redo){
           }
           vTrack(VS,tc.function.name,args,ok,out);elideArgs(tc,ok,out,rw);if(ok)addSrc(a,el,tc.function.name,out);
           const rec=mkRec(tc.function.name,args,ok,out);
+          if(!a.todos?.length){const stat=ct.querySelector('.agentstatus');if(stat){const label=stat.querySelector('.statuslabel');if(label)label.textContent=(ok?'✓ ':'• ')+compactToolText(rec.n)+(rec.p?' · '+String(rec.p).slice(0,34):'');stat.dataset.status='tool'}}
           (a.tools=a.tools||[]).push({name:rec.n,ok,path:rec.p});
           messages.push({role:'tool',tool_call_id:tc.id,name:tc.function.name,content:JSON.stringify(out)});
           if(rec.n==='todo_write'&&ok)paintTodo(el,a,CUR.prev);
@@ -2080,7 +2093,7 @@ async function fmDraw(){
     b.innerHTML='<div class="fmbar"><button class="btn" data-a="back">رجوع</button><button class="btn pri" data-a="save">حفظ</button>'+(f.prev!=null?'<button class="btn" data-a="undo">تراجع</button>':'')+(/\.html?$/i.test(f.path)?'<button class="btn" data-a="pv">معاينة</button>':'')+'<button class="btn" data-a="dl">تنزيل</button><button class="btn" data-a="del">حذف</button></div><textarea class="fmed" spellcheck="false">'+esc(f.content)+'</textarea>';return}
   t.textContent='إدارة الملفات';t.style.cssText='';const n=[...FSC.values()].filter(vis).length;
   b.innerHTML='<div class="wsbar"><select id="wsSel">'+S.ws.list.map(w=>'<option value="'+w.id+'"'+(w.id===S.ws.cur?' selected':'')+'>'+esc(w.name)+'</option>').join('')+'</select><button class="btn" data-a="wsnew">مشروع جديد</button><button class="btn" data-a="wsren">تسمية</button><button class="btn" data-a="wsdel">حذف</button></div>'+
-  '<div class="fmbar"><button class="btn pri" data-a="new"><b class="i i-plus"></b>ملف</button><button class="btn" data-a="dirnew">مجلد</button><button class="btn" data-a="up">رفع</button><button class="btn" data-a="zipx">تصدير ZIP</button><button class="btn" data-a="zipi">استيراد ZIP</button></div>'+(FSC.size?treeHTML():'<div class="note">لا توجد ملفات في هذا المشروع. اطلب من وكيل البرمجة (وضع Coding) إنشاء ملف، أو أنشئ واحداً من هنا. أنشئ AGENTS.md لكتابة تعليمات دائمة للوكيل.</div>')
+  '<div class="fmbar"><button class="btn" data-a="project-preview" title="فتح معاينة المشروع كاملة"><b class="i i-eye"></b> معاينة المشروع</button><button class="btn pri" data-a="new"><b class="i i-plus"></b>ملف</button><button class="btn" data-a="dirnew">مجلد</button><button class="btn" data-a="up">رفع</button><button class="btn" data-a="zipx">تصدير ZIP</button><button class="btn" data-a="zipi">استيراد ZIP</button></div>'+(FSC.size?treeHTML():'<div class="note">لا توجد ملفات في هذا المشروع. اطلب من وكيل البرمجة (وضع Coding) إنشاء ملف، أو أنشئ واحداً من هنا. أنشئ AGENTS.md لكتابة تعليمات دائمة للوكيل.</div>')
 }
 function openFM(){
   fmClose();const o=document.createElement('div');o.className='ov on';o.id='fmov';
@@ -2096,6 +2109,7 @@ function openFM(){
     if(x.dataset.d){const p=x.dataset.d;fmOpen.has(p)?fmOpen.delete(p):fmOpen.add(p);return fmDraw()}
     if(x.dataset.p){fmCur=x.dataset.p;return fmDraw()}
     if(a==='x')return fmClose();
+    if(a==='project-preview'){await cloudOpenSavedPreview();return}
     if(a==='back'){fmCur=null;return fmDraw()}
     if(a==='new'){const n=prompt('اسم الملف (مثال: src/app.js)');if(!n)return;const q=normPath(n);if(FSC.has(q))throw Error('الملف موجود');await fsSave(q,'');fmCur=q;return fmDraw()}
     if(a==='dirnew'){const n=prompt('اسم المجلد (مثال: src/utils)');if(!n)return;const q=normPath(n);await fsPut({path:q+'/.keep',content:'',prev:null});fmOpen.add(q);return fmDraw()}
@@ -2870,9 +2884,11 @@ toolFn.cloud_terminal=async({command})=>{return cloudExecute('run',{command})};
 toolDefs.cloud_powershell=fd('cloud_powershell','Run actual Linux PowerShell (pwsh) in Vercel Sandbox. Only if installed by administrator in prepared sandbox.',{script:{type:'string'},check_installation:{type:'boolean'}},[]);
 toolFn.cloud_powershell=async({script,check_installation})=>{return cloudExecute('powershell',{script,install:!!check_installation})};
 toolDefs.cloud_test=fd('cloud_test','Sync all workspace files and run real build/tests inside Vercel Linux Sandbox. Only THREE test/repair rounds per user request. Tool outcomes with ok:false or nonzero exitCode mean FAILED; stop on connection errors (504). On test failures edit workspace files before trying again; do not claim success without exitCode 0. Commands e.g. npm install && npm run build, or python3 -m unittest discover.',{command:{type:'string'}},['command']);
-toolFn.cloud_test=async({command})=>{const k=cloudRounds(),n=CLOUD_ATTEMPTS[k]||0;if(n>=3)return {passed:false,limitReached:true,remaining:0,message:'وصلت للحد الأقصى 3 جولات اختبار/إصلاح للطلب الحالي'};CLOUD_ATTEMPTS[k]=n+1;const r=await cloudExecute('run',{command});return {...r,passed:r.exitCode===0,attempt:n+1,remaining:2-n,hint:r.exitCode===0?'التنفيذ نجح؛ هذا لا يضمن نجاح UI بلا اختبار Chromium.':'راجع stderr وعدّل الملفات ثم استخدم جولة الاختبار التالية.'}};
+toolFn.cloud_test=async({command})=>{const k=cloudRounds(),n=CLOUD_ATTEMPTS[k]||0;if(n>=3)return {passed:false,limitReached:true,remaining:0,message:'وصلت للحد الأقصى 3 جولات اختبار/إصلاح للطلب الحالي'};CLOUD_ATTEMPTS[k]=n+1;const segments=String(command||'').split(/\s*&&\s*/).map(x=>x.trim()).filter(Boolean);
+ const staged=segments.length===2&&/^(?:npm|pnpm|yarn)\s+(?:install|ci)(?:\s|$)/.test(segments[0])&&/^(?:npm|pnpm|yarn)\s+(?:run\s+build|build)(?:\s|$)/.test(segments[1]);
+ let r;if(staged){const one=await cloudExecute('run',{command:segments[0]});if(one.exitCode!==0){r={...one,stage:'dependencies'}}else{const two=await cloudExecute('run',{command:segments[1]});r={...two,stage:'build',installStdout:String(one.stdout||'').slice(-900)}}}else r=await cloudExecute('run',{command});return {...r,passed:r.exitCode===0,attempt:n+1,remaining:2-n,hint:r.exitCode===0?'التنفيذ نجح؛ هذا لا يضمن نجاح UI بلا اختبار Chromium.':'راجع stderr وعدّل الملفات ثم استخدم جولة الاختبار التالية.'}};
 toolDefs.cloud_preview=fd('cloud_preview','Start project web server on port 3000 inside the Vercel Sandbox and return public live preview URL. React/Vite: npm run dev -- --host 0.0.0.0 --port 3000; Python static: python3 -m http.server 3000 --bind 0.0.0.0. Sandbox expires.',{command:{type:'string'}},['command']);
-toolFn.cloud_preview=async({command})=>{const r=await cloudExecute('preview',{command});cloudShowPreview(r.url);return r};
+toolFn.cloud_preview=async({command})=>{const r=await cloudExecute('preview',{command});if(r.ok&&r.url){cloudSavePreview(r.url,command);cloudShowPreview(r.url)}return r};
 toolDefs.cloud_chromium_install=fd('cloud_chromium_install','Install Playwright Chromium dependencies in Sandbox. Heavy operation; use only with explicit user request.',{},[]);
 toolFn.cloud_chromium_install=async()=>{return cloudExecute('chromium-install',{},false)};
 toolDefs.cloud_chromium=fd('cloud_chromium','Run optional real Chromium Playwright smoke check against running local server on port 3000. Requires Playwright and browser installed inside Sandbox first; installation may exceed Hobby budget.',{},[]);
@@ -2908,7 +2924,17 @@ runToolCall=async function(tc){
   throw e;
  }
 };
-function cloudShowPreview(url){if(!/^https:\/\//.test(url||''))return;let p=document.getElementById('cloud-preview-modal');if(!p){p=document.createElement('div');p.id='cloud-preview-modal';p.style.cssText='position:fixed;inset:3%;z-index:9999;background:var(--bg);border:1px solid var(--line);border-radius:15px;display:flex;flex-direction:column;padding:12px;box-shadow:0 15px 70px #0008';document.body.appendChild(p)}p.replaceChildren();const bar=document.createElement('div');bar.style.cssText='display:flex;align-items:center;gap:12px;margin-bottom:10px;direction:ltr';const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener';link.textContent='Open preview ↗';const close=document.createElement('button');close.textContent='إغلاق ×';close.onclick=()=>p.remove();bar.append(link,close);const frame=document.createElement('iframe');frame.src=url;frame.setAttribute('sandbox','allow-scripts allow-forms allow-same-origin allow-popups');frame.style.cssText='width:100%;flex:1;border:1px solid var(--line);border-radius:10px';frame.title='Live Vercel Sandbox Preview';p.append(bar,frame);}
+// One last-known preview per workspace. URL is a short-lived runtime address, not a deployment.
+const CLOUD_PREVIEW_KEY='aiway_project_preview_v2';
+function cloudPreviewList(){try{return JSON.parse(localStorage.getItem(CLOUD_PREVIEW_KEY)||'{}')}catch{return {}}}
+function cloudSavePreview(url,command){if(!/^https:\/\/[a-z0-9.-]+\.vercel\.run(?:[:/]|$)/i.test(url||''))return;const list=cloudPreviewList();list[cloudWorkspaceKey()]={url,command:String(command||'').slice(0,400),sandboxId:cloudNames()[cloudWorkspaceKey()]||'',savedAt:Date.now()};localStorage.setItem(CLOUD_PREVIEW_KEY,JSON.stringify(list))}
+async function cloudOpenSavedPreview(){const item=cloudPreviewList()[cloudWorkspaceKey()];if(!item){toast('لا توجد معاينة سحابية محفوظة لهذا المشروع. اطلب من AI تشغيل cloud_preview أولاً.');return}
+  const current=cloudNames()[cloudWorkspaceKey()];if(!current||current!==item.sandboxId){toast('معاينة المشروع قديمة لأن جلسة Sandbox تغيرت. اطلب من AI تشغيل معاينة جديدة.');return}
+  try{await cloudAPI('status');cloudShowPreview(item.url)}catch(e){toast('جلسة المعاينة غير متاحة الآن. اطلب من AI إعادة تشغيل المشروع والمعاينة.')}}
+function cloudShowPreview(url){if(!/^https:\/\/[a-z0-9.-]+\.vercel\.run(?:[:/]|$)/i.test(url||''))return;
+ let p=document.getElementById('cloud-preview-modal');if(!p){p=document.createElement('div');p.id='cloud-preview-modal';p.className='cloud-preview-overlay';document.body.append(p)}
+ p.replaceChildren();const bar=document.createElement('div');bar.className='cloud-preview-bar';const name=document.createElement('b');name.textContent='معاينة المشروع';const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='فتح خارجي ↗';const refresh=document.createElement('button');refresh.type='button';refresh.textContent='تحديث ↻';const close=document.createElement('button');close.type='button';close.textContent='إغلاق ×';close.onclick=()=>p.remove();bar.append(name,link,refresh,close);
+ const frame=document.createElement('iframe');frame.src=url;frame.setAttribute('sandbox','allow-scripts allow-forms allow-same-origin allow-popups');frame.title='Live Vercel Sandbox Preview';refresh.onclick=()=>{frame.src=url};p.append(bar,frame)}
 // Terminal is intentionally agent-only. The secret stays in local browser storage;
 // project administrators still configure the same secret in Vercel environment variables.
 const _cloudSettingsBase=setO;
