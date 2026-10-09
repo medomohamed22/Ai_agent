@@ -27,6 +27,18 @@ function sandboxIdentity(body) {
   err.statusCode=422;throw err;
 }
 async function sandboxFor(body) {return Sandbox.get(sandboxIdentity(body));}
+const isStopped = e => { const msg=String(e?.message||'')+' '+String(e?.code||''); return Number(e?.statusCode||e?.status||e?.response?.status)===410 || /SANDBOX_STOPPED|SANDBOX_STOPPING|snapshot.*(expired|not found)/i.test(msg); };
+// Run ONE retry only when the provider confirms that the previous session stopped.
+// SDK persistent named sandboxes can resume from a snapshot upon command execution.
+async function withResume(body, operation) {
+  let sb=await sandboxFor(body);
+  try {return await operation(sb)} catch(e) {
+    if(!isStopped(e)) throw e;
+    await new Promise(resolve=>setTimeout(resolve,700));
+    sb=await sandboxFor(body);
+    return operation(sb);
+  }
+}
 const shell = (sb,command) => exec(sb,'timeout',['45s','bash','-lc',`cd /vercel/sandbox && ${command}`]);
 function apiFailure(e) {
   const detail = saneText(e?.message || e);
@@ -34,12 +46,14 @@ function apiFailure(e) {
   const code = String(e?.code || '');
   const limited = status === 429 || /(?:^|\D)429(?:\D|$)|rate.limit|quota|too many requests|resource.exhausted/i.test(detail);
   const auth = status === 401 || status === 403;
+  const gone = status === 410 || /SANDBOX_STOPPED|SANDBOX_STOPPING|SNAPSHOT_NOT_FOUND|SNAPSHOT_EXPIRED/i.test(code+' '+detail);
   const notFound = status === 404 || /SANDBOX_NOT_FOUND|SANDBOX_EXPIRED/i.test(code + ' ' + detail);
   const hint = limited ? 'Vercel Sandbox رفض الطلب بسبب حد الاستخدام/المعدل. افتح Vercel → Usage → Sandboxes، انتظر تجدد الحد، ولا تكرر إنشاء البيئات بسرعة.'
     : auth ? 'تأكد من تفعيل Sandboxes للمشروع وصلاحيات Vercel/OIDC. AIWAY_SANDBOX_SECRET يحمي موقعك فقط ولا يمنح صلاحيات Vercel.'
+    : gone ? 'جلسة Sandbox انتهت أو لقطة استعادتها لم تعد متاحة. سيحاول AiWay استعادة الجلسة أو إنشاء أخرى ومزامنة الملفات عند تنفيذ الطلب التالي.'
     : notFound ? 'Sandbox غير متاح أو انتهت صلاحيته؛ احذف الجلسة القديمة وأنشئ جلسة واحدة جديدة.'
     : 'راجع سجلات Functions وSandboxes في لوحة Vercel لمعرفة الخطأ الأصلي.';
-  return { status:limited?429:auth?403:notFound?404:(status>=400&&status<500?status:502), data:{ok:false,error:hint,detail,code,upstreamStatus:status||undefined} };
+  return { status:limited?429:auth?403:gone?410:notFound?404:(status>=400&&status<500?status:502), data:{ok:false,error:hint,detail,code,upstreamStatus:status||undefined} };
 }
 export default async function handler(req,res) {
   res.setHeader('Cache-Control','no-store');
@@ -61,37 +75,36 @@ export default async function handler(req,res) {
       return RESP(res,200,{ok:true,name:identity,sandboxId:identity,probe,limits:{vcpus:1,sessionMinutes:5,files:MAX_FILES,bytes:MAX_BYTES}});
     }
     if (!['sync','run','preview','stop','powershell','chromium','chromium-install','status'].includes(b.action)) return RESP(res,400,{error:'Unknown action'});
-    const sb=await sandboxFor(b);
-    if(b.action==='status') return RESP(res,200,{ok:true,name:b.sandboxId||b.name,status:sb.status||'available'});
+    if(b.action==='status') {const sb=await sandboxFor(b);return RESP(res,200,{ok:true,name:b.sandboxId||b.name,status:sb.status||'available'});}
     if(b.action==='sync') {
       const files=validateFiles(b.files);
-      await sb.writeFiles(files.map(f=>({path:'/vercel/sandbox/'+f.path,content:Buffer.from(f.content,'utf8')})));
+      await withResume(b,sb=>sb.writeFiles(files.map(f=>({path:'/vercel/sandbox/'+f.path,content:Buffer.from(f.content,'utf8')}))));
       return RESP(res,200,{ok:true,count:files.length});
     }
     if(b.action==='run') {
       const command=validateCommand(b.command);
-      const r=await shell(sb,command);return RESP(res,200,{ok:r.exitCode===0,...r});
+      const r=await withResume(b,sb=>shell(sb,command));return RESP(res,200,{ok:r.exitCode===0,...r});
     }
     if(b.action==='preview') {
       const command=validateCommand(b.command||'python3 -m http.server 3000 --bind 0.0.0.0');
-      const result=await exec(sb,'bash',['-lc',`cd /vercel/sandbox && ${command}`],{detached:true});
-      return RESP(res,200,{ok:true,...result,url:sb.domain(3000)});
+      const result=await withResume(b,async sb=>({...(await exec(sb,'bash',['-lc',`cd /vercel/sandbox && ${command}`],{detached:true})),url:sb.domain(3000)}));
+      return RESP(res,200,{ok:true,...result});
     }
     if(b.action==='powershell') {
       // Install only on user request. Availability depends on the current Linux image.
       if(b.install) {
         // Microsoft-published RHEL compatible RPM; Amazon Linux compatibility must be verified on actual sandbox.
         const command="if command -v pwsh >/dev/null 2>&1; then pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'; else sudo dnf install -y https://github.com/PowerShell/PowerShell/releases/download/v7.6.6/powershell-7.6.6-1.rh.x86_64.rpm && pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'; fi";
-        const r=await shell(sb,command);
+        const r=await withResume(b,sb=>shell(sb,command));
         return RESP(res,200,{ok:r.exitCode===0,...r,warning:'This RPM targets RHEL-compatible Linux; verify compatibility on the Vercel Sandbox image.'});
       }
       const script=String(b.script||'').slice(0,4000);
       const encoded=Buffer.from(script,'utf16le').toString('base64');
-      const r=await exec(sb,'pwsh',['-NoProfile','-NonInteractive','-EncodedCommand',encoded]);
+      const r=await withResume(b,sb=>exec(sb,'pwsh',['-NoProfile','-NonInteractive','-EncodedCommand',encoded]));
       return RESP(res,200,{ok:r.exitCode===0,...r});
     }
     if(b.action==='chromium-install') {
-      const r=await shell(sb,'npm install --no-save playwright && npx playwright install chromium --with-deps');
+      const r=await withResume(b,sb=>shell(sb,'npm install --no-save playwright && npx playwright install chromium --only-shell'));
       return RESP(res,200,{ok:r.exitCode===0,...r,warning:'Chromium installation can exceed the Hobby memory/time or network allowance.'});
     }
     if(b.action==='chromium') {
@@ -99,9 +112,9 @@ export default async function handler(req,res) {
       const url=String(b.url||'http://127.0.0.1:3000');
       if(!/^http:\/\/127\.0\.0\.1:3000(?:\/|$)/.test(url))throw Error('Only local sandbox preview allowed');
       const script="const { chromium } = require('playwright'); (async()=>{ const b=await chromium.launch({headless:true,args:['--no-sandbox']}); const p=await b.newPage(); const errors=[]; p.on('pageerror',e=>errors.push(String(e))); const r=await p.goto(process.argv[1],{waitUntil:'domcontentloaded',timeout:15000}); console.log(JSON.stringify({status:r?.status(),title:await p.title(),errors}));await b.close() })().catch(e=>{console.error(e.stack);process.exit(1)})";
-      const r=await exec(sb,'node',['-e',script,url]);
-      return RESP(res,200,{ok:r.exitCode===0,...r,hint:r.exitCode?'Install playwright and chromium in the sandbox first (npm install playwright && npx playwright install chromium --with-deps). This may exceed Hobby resources.':undefined});
+      const r=await withResume(b,sb=>exec(sb,'node',['-e',script,url]));
+      return RESP(res,200,{ok:r.exitCode===0,...r,hint:r.exitCode?'Install playwright and chromium in the sandbox first (npm install playwright && npx playwright install chromium --only-shell). This may exceed Hobby resources.':undefined});
     }
-    await sb.stop();return RESP(res,200,{ok:true,stopped:true});
+    await (await sandboxFor(b)).stop();return RESP(res,200,{ok:true,stopped:true});
   } catch(e) {const {status,data}=apiFailure(e);return RESP(res,status,data);}
 }
