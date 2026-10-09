@@ -39,7 +39,7 @@ async function withResume(body, operation) {
     return operation(sb);
   }
 }
-const shell = (sb,command) => exec(sb,'timeout',['40s','bash','-lc',`cd /vercel/sandbox && ${command}`]);
+const shell = (sb,command) => exec(sb,'timeout',['48s','bash','-lc',`cd /vercel/sandbox && ${command}`]);
 function apiFailure(e) {
   const detail = saneText(e?.message || e);
   const status = Number(e?.statusCode || e?.status || e?.response?.status || 0);
