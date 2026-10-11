@@ -3,6 +3,15 @@
   "functions": {
     "api/sandbox.mjs": {
       "maxDuration": 60
+    },
+    "api/daily-check.mjs": {
+      "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/daily-check",
+      "schedule": "0 5 * * *"
+    }
+  ]
 }

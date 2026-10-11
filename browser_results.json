@@ -1,0 +1,72 @@
+[
+  {
+    "test": "load home",
+    "status": "PASS",
+    "detail": "AiWay"
+  },
+  {
+    "test": "app initialization",
+    "status": "PASS",
+    "detail": "1"
+  },
+  {
+    "test": "settings open",
+    "status": "PASS",
+    "detail": "(None, 'ov')"
+  },
+  {
+    "test": "settings tabs",
+    "status": "PASS",
+    "detail": "['', 'المزوّد والنموذج', 'المهارات والشروط', 'Multi Agent', 'الأدوات', 'أدوات خارجية', 'النسخ الاحتياطي']"
+  },
+  {
+    "test": "settings close",
+    "status": "PASS",
+    "detail": "None"
+  },
+  {
+    "test": "context panel",
+    "status": "PASS",
+    "detail": "(None, '')"
+  },
+  {
+    "test": "slash command panel",
+    "status": "PASS",
+    "detail": "(None, '')"
+  },
+  {
+    "test": "RAG library",
+    "status": "PASS",
+    "detail": "(None, '')"
+  },
+  {
+    "test": "jobs panel",
+    "status": "PASS",
+    "detail": "(None, '')"
+  },
+  {
+    "test": "effort selection",
+    "status": "PASS",
+    "detail": "(['high'], 'high')"
+  },
+  {
+    "test": "reasoning expand",
+    "status": "PASS",
+    "detail": "(None, '')"
+  },
+  {
+    "test": "new conversation",
+    "status": "PASS",
+    "detail": "(None, '')"
+  },
+  {
+    "test": "chat input",
+    "status": "PASS",
+    "detail": "(None, '/context')"
+  },
+  {
+    "test": "javascript runtime errors (excluding opaque-origin IndexedDB)",
+    "status": "PASS",
+    "detail": "no app errors; IndexedDB unavailable in set_content origin"
+  }
+]

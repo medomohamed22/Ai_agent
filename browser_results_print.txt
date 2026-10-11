@@ -1,0 +1,72 @@
+[
+  {
+    "test": "load home",
+    "status": "FAIL",
+    "detail": "Page.set_content: Timeout 20000ms exceeded.\nCall log:\n  - setting frame content, waiting until \"domcontentloaded\"\n"
+  },
+  {
+    "test": "app initialization",
+    "status": "PASS",
+    "detail": "1"
+  },
+  {
+    "test": "settings open",
+    "status": "PASS",
+    "detail": "(None, 'ov')"
+  },
+  {
+    "test": "settings tabs",
+    "status": "PASS",
+    "detail": "['', 'المزوّد والنموذج', 'المهارات والشروط', 'Multi Agent', 'الأدوات', 'أدوات خارجية', 'النسخ الاحتياطي']"
+  },
+  {
+    "test": "settings close",
+    "status": "FAIL",
+    "detail": "Locator.click: Timeout 2500ms exceeded.\nCall log:\n  - waiting for locator(\"#cl\")\n    - locator resolved to <button id=\"cl\" class=\"ib\" aria-label=\"إغلاق\">…</button>\n  - attempting click action\n    2 × waiting for element to be visible, enabl"
+  },
+  {
+    "test": "context panel",
+    "status": "PASS",
+    "detail": "(None, 'استهلاك السياق — تقديري\\n\\n٠ / 400,000 توكن · 0.0% · الرسائل الأصلية 0 · دورات الضغط 0\\n\\nهذا تقدير لحجم السجل وليس قيمة عداد التوكن لدى المزوّد؛ يبدأ A"
+  },
+  {
+    "test": "slash command panel",
+    "status": "PASS",
+    "detail": "(None, 'الأوامر السريعة\\n+ أمر مخصص\\n/compact\\nضغط سياق المحادثة\\n/context\\nعرض التوكن والسياق\\n/rewind\\nالعودة لآخر رسالة مستخدم\\n/plan\\nتخطيط المهمة قبل التنف"
+  },
+  {
+    "test": "RAG library",
+    "status": "PASS",
+    "detail": "(None, 'مكتبة PDF / RAG محلية\\n+ إضافة PDF / نص\\nتُحفظ النصوص في IndexedDB على هذا المتصفح؛ البحث بالكلمات المفتاحية محلي، دون embeddings أو إرسال المكتبة كاملة"
+  },
+  {
+    "test": "jobs panel",
+    "status": "PASS",
+    "detail": "(None, 'المهام المحلية\\nتعمل فقط ما دامت الصفحة مفتوحة. الإشعارات تتطلب إذن المتصفح؛ ليست مهام خادم مستقلة.+ تذكير مؤقت')"
+  },
+  {
+    "test": "effort selection",
+    "status": "PASS",
+    "detail": "(['high'], 'high')"
+  },
+  {
+    "test": "reasoning expand",
+    "status": "PASS",
+    "detail": "(None, '')"
+  },
+  {
+    "test": "new conversation",
+    "status": "PASS",
+    "detail": "(None, 'أهلاً، كيف أقدر أساعدك اليوم؟\\nاضبط المزوّد والنموذج للبدء\\nاشرح لي مفهوماً صعباً ')"
+  },
+  {
+    "test": "chat input",
+    "status": "PASS",
+    "detail": "(None, '/context')"
+  },
+  {
+    "test": "javascript runtime errors (excluding opaque-origin IndexedDB)",
+    "status": "PASS",
+    "detail": "no app errors; IndexedDB unavailable in set_content origin"
+  }
+]
