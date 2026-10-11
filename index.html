@@ -242,7 +242,7 @@ header .chip{min-width:0}
 @keyframes agShake{20%,60%{transform:translateX(-4px)}40%,80%{transform:translateX(4px)}}
 @keyframes agGlow{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--good) 22%,transparent)}}
 @keyframes agPop{0%{transform:scale(.4)}70%{transform:scale(1.18)}100%{transform:scale(1)}}
-.acthost{display:none!important}.acthost:empty,.todohost:empty{display:none}
+.acthost:empty,.todohost:empty{display:none}.acthost:not(:empty){display:block;animation:agIn .35s var(--ease)}
 .act{display:flex;gap:12px;align-items:flex-start;padding:11px 14px;border:1px solid var(--line);border-radius:16px;margin:6px 0;background:var(--bg);position:relative;overflow:hidden;animation:agIn .4s var(--ease)}
 .act .ai{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:var(--soft);flex:none;position:relative;transition:background .3s,color .3s}
 .act.run .ai::after{content:'';position:absolute;inset:-3px;border-radius:15px;border:2px solid var(--fg);animation:agPulse 1.3s ease-out infinite}
@@ -1026,7 +1026,7 @@ $('#at').onclick=()=>$('#fi').click();$('#fi').onchange=async e=>{for(const f of
 function api(m){const fl=(m.files||[]).filter(f=>f.data);if(!fl.length)return{role:m.role,content:m.content};let t=m.content||'';fl.filter(f=>f.type==='text').forEach(f=>t+='\n\n[ملف: '+f.name+']\n'+f.data);const parts=[{type:'text',text:t||'حلّل المرفقات'}];fl.filter(f=>f.type==='image').forEach(f=>parts.push({type:'image_url',image_url:{url:f.data}}));return{role:m.role,content:parts}}
 const AGENT_RULES=`### File agent (overrides any instruction to paste code in the reply)
 You have a real project (file list below) and tools. Never put file code in the reply; it always goes through the tools.
-1. New code/site: write_file(path:"index.html", full content); for several files use write_file(files:[{path,content}]) in ONE call. ASK FIRST (rare): when a NEW build leaves a real choice you cannot infer (visual style, colors, app type, key features), call ask_user ONCE with 1-3 short questions (2-5 options each) before anything else; skip it for specific requests, edits and fixes. MANDATORY PLAN: for ANY request that creates or changes code, your first tool call (right after ask_user if you used it) must be todo_write with a short plan (3-6 concrete steps in the user's language, each under 8 words; first item in_progress, the rest pending). Then work through it: after finishing a step, call todo_write again with the FULL list (finished step done, next one in_progress) together with your next file tool call. Never write code before the plan exists. Skip the plan only for pure questions with no file changes.
+1. New code/site: write_file(path:"index.html", full content); for several files use write_file(files:[{path,content}]) in ONE call. ASK FIRST (rare): when a NEW build leaves a real choice you cannot infer (visual style, colors, app type, key features), call ask_user ONCE with 1-3 short questions (2-5 options each) before anything else; skip it for specific requests, edits and fixes. PLAN: The UI already provides a local live checklist automatically for coding tasks; do NOT call todo_write for straightforward jobs. For complex work requiring 4+ independently tracked stages, todo_write is optional and should only be called when it adds meaningful value. Prefer one write_file call and one final reply; no repeated checklist update calls. Never write code in the reply. Skip planning for pure questions.
 2. Editing: never read a whole file. Locate with search_files (context:N shows surrounding lines), or read_file(symbol:"fnName") which returns a whole function/class/CSS rule in one call, or the outline returned by read_file; read_file(ranges:[{path?,start_line,end_line|symbol}]) reads several spots/files at once (each range at most 80 lines); then edit_file with a short unique old_string. Put ALL changes to one file in ONE edit_file call via edits:[{old_string,new_string}] (atomic). Insert with edit_file(after_line,text). Never re-read a range you already read; never rewrite a file for a small change (write_file on a 40+ line file that is mostly unchanged is refused once: use edits).
 3. Make independent calls (reads/searches) together in the same turn.
 4. Results omit fields on success (no error / syntax_errors means success); when syntax_errors appear, fix them at once. If an edit fails, use the closest snippet in the error message; never repeat the same call. If a call is cut off by length, write the file in parts: write_file skeleton, then edit_file(after_line,text).
@@ -1396,9 +1396,9 @@ async function _callModel(messages,tools=true,stream=true,onDelta=()=>{},onTool=
   if(!r.ok){await fail();
     if((r.status===400||r.status===422)&&/cache_control|cache breakpoint|cache control|invalid.*content/i.test(err)&&dropCache()){r=await post(build(mode));if(!r.ok)await fail()}
     if(stream&&!NOUSAGE.has(key)&&(r.status===400||r.status===422)&&/stream_options|include_usage/i.test(err)){NOUSAGE.add(key);r=await post(build(mode));if(!r.ok)await fail()}
-    if(want&&mode==='req'&&r.status<500){mode='auto';r=await post(build(mode));if(!r.ok)await fail()}
+    if(want&&mode==='req'&&(r.status===400||r.status===422)){mode='auto';r=await post(build(mode));if(!r.ok)await fail()}
     if(!r.ok&&want&&mode!=='text'&&(r.status===400||r.status===422||r.status===404)){TXT.add(key);mode='text';toast('النموذج لا يقبل الأدوات الأصلية — تم التحويل لوضع الأدوات النصي');r=await post(build(mode));if(!r.ok)await fail()}
-    if(!r.ok)throw Error(r.status+' '+err.slice(0,500))}
+    if(!r.ok){if(r.status===429){let info={};try{info=JSON.parse(err)}catch{}const reset=r.headers.get('retry-after');throw Error('429: وصلت للحد المسموح من طلبات أو توكنات النموذج. انتظر إعادة ضبط الحد'+(reset?' ('+reset+' ثانية)':'')+' أو غيّر النموذج. لا يُعاد الطلب تلقائياً.')}throw Error(r.status+' '+err.slice(0,500))}}
   const tm=mode==='text';
   const done=m=>{if(tm){const t=parseTextCalls(m.content||'');return{role:'assistant',content:t.text,tool_calls:t.calls.length?t.calls:undefined}}
     (m.tool_calls||[]).forEach(c=>{if(c.function&&typeof c.function.arguments==='object')c.function.arguments=JSON.stringify(c.function.arguments)});return m};
@@ -1525,6 +1525,11 @@ async function send(text,redo){
         messages.splice(messages.findIndex(m=>m._memoryStable===true)>=0?2:1,0,{role:'system',content:'تعذر البحث في الويب في هذه الرسالة: '+se.message});
       }
     }
+    // Render a local live checklist without spending an extra model request.
+    if(CODE()&&ROUTE.files&&!a.todos?.length){
+      a.todos=[{text:'تحضير وتنفيذ الملف',status:'in_progress'},{text:'فحص النتيجة',status:'pending'},{text:'تسليم الملف النهائي',status:'pending'}];
+      c.todos=structuredClone(a.todos);
+    }
     const skel=()=>{if(!el.querySelector('.ctext')){const st=el.innerHTML;el.innerHTML='<div class="todohost"></div><div class="acthost"></div><div class="ctext">'+st+'</div>';if(a.todos?.length)el.querySelector('.todohost').innerHTML=todoHTML(a.todos,null,false,a)}return el.querySelector('.ctext')};
     if(S.mode==='multi'){
       skel();const cfg=mcfg(),choice=maRoute(text,cfg);a.ma={events:[],usage:[],start:Date.now(),route:choice.level,retries:0,paused:false};MA_RUN.active=a;maTrace(a,'Router','done',choice.reason);
@@ -1539,7 +1544,7 @@ async function send(text,redo){
       maTrace(a,'Executor','running','تنفيذ المهمة');setAgentStatus(el,'think')
     }
     RD.clear();let tl=0,nudges=0;const VS={dirty:false,bad:false,n:0};
-    for(let turn=0;turn<(CODE()?30:(S.searchOn?10:6));turn++){if(CLOUD_LOOP_GUARD?.halt){a.content=CLOUD_LOOP_GUARD.halt;break}if(S.mode==='multi')await maPauseGate(a);
+    for(let turn=0;turn<(CODE()?14:(S.searchOn?8:5));turn++){if(CLOUD_LOOP_GUARD?.halt){a.content=CLOUD_LOOP_GUARD.halt;break}if(S.mode==='multi')await maPauseGate(a);
       messages[0].content=sys();mapSync(messages);shrink(messages);compactActiveMessages(messages);
       if(S.mode==='multi'&&a.ma){const used=(a.reqs||[]).reduce((s,r)=>s+(Number(r.in)||Number(r.input)||0)+(Number(r.out)||Number(r.output)||0),0);if(used>=mcfg().budget){maTrace(a,'Budget','failed','تجاوزت المهمة ميزانية الـTokens المحددة');a.content='تم إيقاف المزيد من الاستدعاءات بعد تجاوز الميزانية التقديرية. يمكن رفع الحد من إعدادات Multi-Agent. جارٍ حفظ النتائج التي تمت.';break}}
       let started=false;a.content='';const ct=skel();TW?.kill();TW=mkTyper(ct,()=>a.content,()=>{if(near())box.scrollTop=box.scrollHeight});
@@ -1555,6 +1560,10 @@ async function send(text,redo){
             if(S.mode==='multi'&&maRetryAllowed(tc.function.name,e.message)&&a.ma.retries<mcfg().retries){
               a.ma.retries++;maTrace(a,'Retry','running',tc.function.name);try{out=await runToolCall(tc);maTrace(a,'Retry','done',tc.function.name)}catch(err){e=err;ok=false;rw=!!e.rewrite;out={error:e.message}}}
             else{ok=false;rw=!!e.rewrite;out={error:e.message}}
+          }
+          if(ok&&a.todos?.length===3&&a.todos[0].text==='تحضير وتنفيذ الملف'&&tc.function.name!=='todo_write'){
+            if(MUT.has(tc.function.name)){a.todos[0].status='done';a.todos[1].status='in_progress';paintTodo(el,a,null)}
+            if(tc.function.name==='verify_code'&&out?.passed){a.todos[0].status='done';a.todos[1].status='done';a.todos[2].status='in_progress';paintTodo(el,a,null)}
           }
           vTrack(VS,tc.function.name,args,ok,out);elideArgs(tc,ok,out,rw);if(ok)addSrc(a,el,tc.function.name,out);
           const rec=mkRec(tc.function.name,args,ok,out);
@@ -1599,7 +1608,7 @@ logDiag('agent','verify gate');messages.push({role:'assistant',content:m.content
     a.ma.end=Date.now();MA_RUN.active=null;
   }
   TW?.kill();try{await cpEnd(a)}catch(e){logDiag('agent','cp failed',e.message)}
-  if(a.todos?.length&&a.content&&!/^تعذّر الاتصال/.test(a.content)&&!ctrl?.signal?.aborted&&a.todos.some(t=>t.status!=='done')){a.todos.forEach(t=>t.status='done');const cc=chat();if(cc)cc.todos=structuredClone(a.todos);paintTodo(el,a,null)}
+  if(a.todos?.length&&a.content&&!/^(تعذّر الاتصال|خطأ|فشل|429:)/.test(a.content)&&!ctrl?.signal?.aborted&&(a.acts||[]).some(x=>x.ok&&MUT.has(x.n))&&a.todos.some(t=>t.status!=='done')){a.todos.forEach(t=>t.status='done');const cc=chat();if(cc)cc.todos=structuredClone(a.todos);paintTodo(el,a,null)}
   if(S.searchOn&&a.content){const have=new Set((a.sources||[]).map(x=>domainOf(x.url)));extractSources(a.content).forEach(x=>{const d=domainOf(x.url);if(!have.has(d)){have.add(d);(a.sources=a.sources||[]).push(x)}});if(a.sources?.length)delete a.searchNote}
   MA_RUN.active=null;el.classList.remove('live');el.innerHTML=md(a.content||'تم إيقاف الرد.');ctrl=null;MX.cur=MX.e=null;$('#go').classList.remove('stop');save();draw();box.scrollTop=box.scrollHeight
 }
