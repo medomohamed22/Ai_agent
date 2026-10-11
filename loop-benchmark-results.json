@@ -1,0 +1,41 @@
+{
+  "note": "Deterministic mocked model; request payload bytes are measured, not provider-billed tokens. Metadata polls are timing-dependent and not part of model counts.",
+  "rows": [
+    {
+      "version": "original",
+      "task": "simple-create",
+      "modelRequests": 3,
+      "payloadBytes": 28684,
+      "metadataObserved": 3,
+      "tools": 3,
+      "stopped": false
+    },
+    {
+      "version": "original",
+      "task": "alternating-loop",
+      "modelRequests": 14,
+      "payloadBytes": 156910,
+      "metadataObserved": 3,
+      "tools": 14,
+      "stopped": false
+    },
+    {
+      "version": "fixed",
+      "task": "simple-create",
+      "modelRequests": 2,
+      "payloadBytes": 20445,
+      "metadataObserved": 0,
+      "tools": 2,
+      "stopped": false
+    },
+    {
+      "version": "fixed",
+      "task": "alternating-loop",
+      "modelRequests": 5,
+      "payloadBytes": 53793,
+      "metadataObserved": 0,
+      "tools": 5,
+      "stopped": true
+    }
+  ]
+}

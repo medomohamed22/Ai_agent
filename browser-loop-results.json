@@ -1,0 +1,84 @@
+{
+  "validation": "Local Chrome + real app/IndexedDB/file tools/iframe checks; model responses are deterministic fixtures, no paid model calls.",
+  "results": [
+    {
+      "name": "new HTML: one write then final; actual local iframe verification",
+      "requests": 2,
+      "metadataRequests": 0,
+      "tools": [
+        "write_file",
+        "verify_code"
+      ],
+      "stopReason": null,
+      "content": "تم إنشاء الصفحة وفحصها."
+    },
+    {
+      "name": "existing HTML: read, edit, final",
+      "requests": 3,
+      "metadataRequests": 0,
+      "tools": [
+        "read_file",
+        "edit_file",
+        "verify_code"
+      ],
+      "stopReason": null,
+      "content": "تم تعديل العنوان وفحصه."
+    },
+    {
+      "name": "alternating read/search loop trips before 14 rounds",
+      "requests": 5,
+      "metadataRequests": 0,
+      "tools": [
+        "read_file",
+        "search_files",
+        "read_file",
+        "search_files",
+        "read_file"
+      ],
+      "stopReason": "توقف تلقائي لتوفير الطلبات والتوكن: تكررت نفس الأداة على نفس الملفات بدون تقدم. راجع النتائج الحالية؛ لم يُفترض اكتمال المهمة.",
+      "content": "توقف تلقائي لتوفير الطلبات والتوكن: تكررت نفس الأداة على نفس الملفات بدون تقدم. راجع النتائج الحالية؛ لم يُفترض اكتمال المهمة."
+    },
+    {
+      "name": "syntax failure repaired then verified before final",
+      "requests": 4,
+      "metadataRequests": 0,
+      "tools": [
+        "write_file",
+        "verify_code",
+        "edit_file",
+        "verify_code"
+      ],
+      "stopReason": null,
+      "content": "تم الإصلاح."
+    },
+    {
+      "name": "multi-file verification checks remaining files after one passes",
+      "requests": 4,
+      "metadataRequests": 0,
+      "tools": [
+        "write_file",
+        "verify_code",
+        "edit_file",
+        "verify_code"
+      ],
+      "stopReason": null,
+      "content": "تم الإصلاح والفحص."
+    },
+    {
+      "name": "invalid model does not trigger tool compatibility retries",
+      "requests": 1,
+      "metadataRequests": 0,
+      "tools": [],
+      "stopReason": null,
+      "content": "تعذّر الاتصال: 400 {\"error\":{\"message\":\"Invalid model ID\"}}"
+    },
+    {
+      "name": "429 stops immediately without automatic retry",
+      "requests": 1,
+      "metadataRequests": 0,
+      "tools": [],
+      "stopReason": null,
+      "content": "تعذّر الاتصال: 429: وصلت للحد المسموح من طلبات أو توكنات النموذج. انتظر إعادة ضبط الحد أو غيّر النموذج. لا يُعاد الطلب تلقائياً."
+    }
+  ]
+}

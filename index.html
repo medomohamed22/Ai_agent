@@ -632,7 +632,9 @@ const DEFAULT_RULES=`أنت مساعد ذكي عام ومفيد، تتحدث ب�
 7. في المواضيع الطبية والقانونية والمالية قدّم معلومات عامة وانصح بمراجعة مختص عند الحاجة.
 `;
 const DEFAULT_RULES_CODE=`You are an expert AI coding agent working inside a real file workspace. Reply in the user's language; keep identifiers in English.
-When a task spans multiple stages, use task_state save and load to persist progress. Use tool_batch only for independent read-only file operations. Use chromium_check for UI runtime checks only when a local companion is configured; never claim it ran if unavailable. Write complete, working code (never "..." or placeholders), handle errors and edge cases, never write malicious code. A web page/app is one complete index.html (CSS and JS inline) unless asked otherwise. Keep the final reply to 1-2 lines: what you did and how to run it.`;
+Use task_state only for long tasks that need to resume across sessions; skip it for routine edits. Use tool_batch only for independent read-only file operations. Use chromium_check for UI runtime checks only when a local companion is configured; never claim it ran if unavailable. Write complete, working code (never "..." or placeholders), handle errors and edge cases, never write malicious code. A web page/app is one complete index.html (CSS and JS inline) unless asked otherwise. Keep the final reply to 1-2 lines: what you did and how to run it.`;
+// Upgrade only the exact shipped default; preserve user-authored coding rules.
+function upgradeCodeRules(rules){const previous=DEFAULT_RULES_CODE.replace('Use task_state only for long tasks that need to resume across sessions; skip it for routine edits.','When a task spans multiple stages, use task_state save and load to persist progress.');return rules===previous?DEFAULT_RULES_CODE:rules}
 const DEFAULT_SKILLS=[
 {id:'c_id',mode:'chat',name:'هوية المساعد',desc:'الأسلوب العام والنبرة',content:`أنت مساعد ودود وعملي. اجعل الرد مناسباً لمستوى المستخدم، مختصراً ومنظماً، وقدّم الخطوة التالية المقترحة عندما يفيد ذلك.`},
 {id:'c_explain',mode:'chat',name:'الشرح والتعليم',desc:'تبسيط المفاهيم',content:`عند الشرح ابدأ بالفكرة الأساسية في جملة أو اثنتين، ثم قدّم مثالاً أو تشبيهاً، ثم التفاصيل. تدرّج من البسيط إلى المعقد.`},
@@ -775,6 +777,7 @@ async function loadState(){
   if((S.ver||0)<17){if(/كتلة Markdown/.test(S.rulesCode||''))S.rulesCode=DEFAULT_RULES_CODE;(S.skills||[]).forEach(x=>{const d=DEFAULT_SKILLS.find(y=>y.id===x.id);if(d&&['k_web','k_review','k_debug'].includes(x.id))x.content=d.content});S.ver=17}
   if((S.ver||0)<19){if(h32(S.rulesCode)===OLDH.rules)S.rulesCode=DEFAULT_RULES_CODE;(S.skills||[]).forEach(x=>{const d=DEFAULT_SKILLS.find(y=>y.id===x.id);if(d&&OLDH.sk[x.id]===h32(x.content))x.content=d.content});S.ver=19}
   if(!S.rules)S.rules=DEFAULT_RULES;
+  S.rulesCode=upgradeCodeRules(S.rulesCode);
   if(!S.rulesCode)S.rulesCode=DEFAULT_RULES_CODE;
   if(!S.skills?.length)S.skills=structuredClone(DEFAULT_SKILLS);
   if(!S.toolOff)S.toolOff={};
@@ -1045,7 +1048,7 @@ ids.includes('sub_agent')?SUBRULES:'',
 ids.some(x=>x.startsWith('mcp_'))?MCPRULES:'',
 (fm&&TXT.has(tkey()))?textProto():'',
 ...pickSkills(code),
-`### البيئة\n${lazyToolsConfig().enabled?'الأدوات تُحمّل عند الحاجة: استدعِ tool_search ببحث قصير ثم استخدم الأداة في الجولة التالية. استخدم programmatic_tools لقراءات متعددة مع فلترة النتائج في JavaScript معزول (قراءة فقط). ':''}Cloud backend tools: on Vercel require AIWAY_SANDBOX_SECRET. Do not claim cloud tests ran unless cloud_test returned exitCode=0.\nتاريخ اليوم: ${CURRENT_DATE_ISO()}.\nالأدوات المتاحة الآن: ${lazyToolsConfig().enabled?enabledTools().map(t=>t.function.name).join(', '):ids.join(', ')||'لا يوجد'}. لا تدّعِ استخدام أداة غير مفعّلة.${S.searchOn?' وضع البحث في الويب مفعّل.':''}${code&&!fm?' أدوات الملفات متوقفة: اكتب الكود في كتل Markdown.':''}`,
+`### البيئة\n${lazyToolsConfig().enabled?'أدوات الملفات الأساسية جاهزة مباشرة؛ استخدمها الآن. استدعِ tool_search فقط لقدرة إضافية غير ظاهرة تحتاجها المهمة؛ لا تبحث عن أداة ظاهرة بالفعل. ':''}Cloud backend tools: on Vercel require AIWAY_SANDBOX_SECRET. Do not claim cloud tests ran unless cloud_test returned exitCode=0.\nتاريخ اليوم: ${CURRENT_DATE_ISO()}.\nالأدوات المتاحة الآن: ${lazyToolsConfig().enabled?enabledTools().map(t=>t.function.name).join(', '):ids.join(', ')||'لا يوجد'}. لا تدّعِ استخدام أداة غير مفعّلة.${S.searchOn?' وضع البحث في الويب مفعّل.':''}${code&&!fm?' أدوات الملفات متوقفة: اكتب الكود في كتل Markdown.':''}`,
 ''
 ].filter(Boolean).join('\n\n').trim()};
 const CURRENT_DATE_ISO=()=>new Date().toISOString().slice(0,10);
@@ -1257,7 +1260,7 @@ const WEBK=/دلوقتي|النهارده|الان|اخر|احدث|عملة|عم
 const SK={c_explain:/اشرح|شرح|ما هو|ما هي|ماهو|وضح|يعني|explain|what is|how does|why/i,c_write:/اكتب|صياغ|ترجم|لخص|حرر|رسالة|إيميل|بريد|translate|rewrite|email|draft|summar/i,c_think:/قارن|مقارنة|الأفضل|قرار|خطة|أيهما|اختار|عيوب|مميزات|compare|\bvs\b|plan|decide|pros|cons/i,k_web:/html|css|صفحة|موقع|واجهة|\bui\b|react|frontend|تصميم|tailwind|\bdom\b/i,k_back:/\bapi\b|node|python|sql|database|سيرفر|server|express|قاعدة|backend|django|flask/i,k_debug:/خطأ|error|bug|مشكلة|لا يعمل|fix|exception|debug|اصلح|أصلح|crash/i,k_review:/راجع|review|refactor|حسّن|حسن|هيكل|clean/i,k_sec:/أمان|security|xss|injection|أداء|performance|سرعة|optimi/i,k_test:/\btest|اختبار|unit|توثيق|docs|jsdoc/i};
 const skOk=x=>!ECO().skills||x.id==='c_id'||x.id==='k_core'||(x.id==='c_research'?S.searchOn:(!SK[x.id]||SK[x.id].test(ROUTE.ctx)));
 const skList=code=>S.skills.filter(x=>!x.off&&(x.mode||'chat')===(code?'code':'chat'));
-const pickSkills=code=>{const L=skList(code),def=ECO().skills&&!TXT.has(tkey()),ld=chat()?.sk||[],
+const pickSkills=code=>{const L=skList(code),def=!code&&ECO().skills&&!TXT.has(tkey()),ld=chat()?.sk||[],
  full=L.filter(x=>!ECO().skills||x.id==='c_id'||x.id==='k_core'||ld.includes(x.id)||(x.id==='c_research'&&S.searchOn)||(SK[x.id]?!def&&SK[x.id].test(ROUTE.ctx):!def)),rest=L.filter(x=>!full.includes(x));
  ROUTE.defer=def&&rest.length>0;if(ROUTE.defer)TK.s+=rest.reduce((a,x)=>a+x.content.length,0)/3;
  return[...full.map(x=>'### مهارة: '+x.name+'\n'+x.content),...(ROUTE.defer?['### فهرس المهارات المتاحة (لم تُحمَّل بعد)\nإذا طابق طلبُ المستخدم إحدى المهارات فاستدعِ load_skill(name=المعرّف) قبل التنفيذ، ثم تابع. لا تحمّل مهارة غير لازمة ولا تكرر تحميلها.\n'+rest.map(x=>'- '+x.id+': '+x.name+(x.desc?' — '+x.desc:'')).join('\n')]:[])]};
@@ -1365,7 +1368,7 @@ function shrink(ms){
 {const _f=window.fetch;window.fetch=function(u,o){try{if(/\/chat\/completions/.test(u)&&o?.body){TK.i+=String(o.body).length/3;TK.n++}}catch{}return _f.apply(this,arguments)}}
 const toolOn=t=>t.id==='tool_search'?!S.toolOff[t.id]:(!S.toolOff[t.id]&&(!t.id.startsWith('cloud_')||CODE())&&(t.id.startsWith('memory_')?S.mode==='chat'&&memCfg().enabled:t.id==='sub_agent'?subIds().length>0:t.id==='chromium_check'?CODE()&&!!chromiumPref().token:((t.id==='web_search'||t.id==='open_page')?S.searchOn:(ROUTE.files&&(!t.code||CODE())))));
 const hiddenTool=id=>CODE()&&(id==='cloud_chromium_install'||((id==='list_files'&&FSC.size<=80)||(id==='insert_lines'&&!S.toolOff.edit_file)));
-const enabledTools=()=>{const all=enabledToolIds();if(!lazyToolsConfig().enabled)return all.map(id=>cleanSchema(toolDefs[id])).filter(Boolean);const keep=new Set(['tool_search','programmatic_tools',...lazyToolState.loaded]);return all.filter(id=>keep.has(id)).map(id=>cleanSchema(toolDefs[id])).filter(Boolean)};
+const enabledTools=()=>{const all=enabledToolIds();if(!lazyToolsConfig().enabled)return all.map(id=>cleanSchema(toolDefs[id])).filter(Boolean);const keep=new Set(['tool_search',...(CODE()&&ROUTE.files?['read_file','search_files','write_file','edit_file']:[]),...lazyToolState.loaded]);return all.filter(id=>keep.has(id)).map(id=>cleanSchema(toolDefs[id])).filter(Boolean)};
 
 async function runToolCall(tc){
   const name=tc.function.name;if(!toolFn[name]||!enabledToolIds().includes(name))throw Error('أداة غير متاحة: '+name+'. المتاحة: '+enabledToolIds().join(', '));
@@ -1388,7 +1391,7 @@ async function _callModel(messages,tools=true,stream=true,onDelta=()=>{},onTool=
   const p=X?.prov||prov(),key=X?(p.url||'')+'|'+(X.model||p.model):tkey(),force=FORCE;FORCE=null;messages=cachePrep(messages,p,X?.model||p.model);
   const want=tools&&(X?X.tools:enabledTools()).length>0;
   const build=mode=>{const b={model:X?.model||p.model,messages:mode==='text'?toTextMsgs(messages):messages,stream,temperature:CODE()?.2:.6};const effort=smartCfg().effort;if(effort!=='off'&&/openai\.com|openrouter\.ai/i.test(p.url||'')&&/^(o[1-9]|gpt-5|gpt-6)/i.test(X?.model||p.model)){b.reasoning_effort=effort;delete b.temperature;}if(stream&&!NOUSAGE.has(key))b.stream_options={include_usage:true};if(mode==='req'||mode==='auto'){b.tools=X?X.tools:enabledTools();b.tool_choice=mode==='req'?force:'auto'}return b};
-  const post=b=>fetch(base(p.url)+'/chat/completions',{method:'POST',signal:ctrl.signal,headers:{'Content-Type':'application/json',Authorization:'Bearer '+p.key},body:JSON.stringify(/api\.openai\.com/i.test(p.url||'')?{...b,prompt_cache_key:'aiway-'+S.mode+'-'+(S.memory?.cacheId||(S.memory.cacheId=uid(),save(),S.memory.cacheId))}:b)});
+  const post=b=>{agentRequest(AGENT_RUN,b);return fetch(base(p.url)+'/chat/completions',{method:'POST',signal:ctrl.signal,headers:{'Content-Type':'application/json',Authorization:'Bearer '+p.key},body:JSON.stringify(/api\.openai\.com/i.test(p.url||'')?{...b,prompt_cache_key:'aiway-'+S.mode+'-'+(S.memory?.cacheId||(S.memory.cacheId=uid(),save(),S.memory.cacheId))}:b)})};
   let mode=!want?'none':TXT.has(key)?'text':force?'req':'auto',r=await post(build(mode)),err='';
   const fail=async()=>{err=await r.text();logDiag('llm-http','HTTP '+r.status+' ['+mode+']',err.slice(0,700))};
   // Some OpenAI-compatible gateways reject Anthropic cache_control blocks. Retry safely without them.
@@ -1396,8 +1399,8 @@ async function _callModel(messages,tools=true,stream=true,onDelta=()=>{},onTool=
   if(!r.ok){await fail();
     if((r.status===400||r.status===422)&&/cache_control|cache breakpoint|cache control|invalid.*content/i.test(err)&&dropCache()){r=await post(build(mode));if(!r.ok)await fail()}
     if(stream&&!NOUSAGE.has(key)&&(r.status===400||r.status===422)&&/stream_options|include_usage/i.test(err)){NOUSAGE.add(key);r=await post(build(mode));if(!r.ok)await fail()}
-    if(want&&mode==='req'&&(r.status===400||r.status===422)){mode='auto';r=await post(build(mode));if(!r.ok)await fail()}
-    if(!r.ok&&want&&mode!=='text'&&(r.status===400||r.status===422||r.status===404)){TXT.add(key);mode='text';toast('النموذج لا يقبل الأدوات الأصلية — تم التحويل لوضع الأدوات النصي');r=await post(build(mode));if(!r.ok)await fail()}
+    if(want&&mode==='req'&&(r.status===400||r.status===422)&&/tool_choice|required|function calling/i.test(err)){mode='auto';r=await post(build(mode));if(!r.ok)await fail()}
+    if(!r.ok&&want&&mode!=='text'&&(r.status===400||r.status===422||r.status===404)&&/tools?|function.?call|unsupported.*function/i.test(err)){TXT.add(key);mode='text';toast('النموذج لا يقبل الأدوات الأصلية — تم التحويل لوضع الأدوات النصي');r=await post(build(mode));if(!r.ok)await fail()}
     if(!r.ok){if(r.status===429){let info={};try{info=JSON.parse(err)}catch{}const reset=r.headers.get('retry-after');throw Error('429: وصلت للحد المسموح من طلبات أو توكنات النموذج. انتظر إعادة ضبط الحد'+(reset?' ('+reset+' ثانية)':'')+' أو غيّر النموذج. لا يُعاد الطلب تلقائياً.')}throw Error(r.status+' '+err.slice(0,500))}}
   const tm=mode==='text';
   const done=m=>{if(tm){const t=parseTextCalls(m.content||'');return{role:'assistant',content:t.text,tool_calls:t.calls.length?t.calls:undefined}}
@@ -1503,7 +1506,7 @@ async function send(text,redo){
   let c=chat();if(!c){c={id:uid(),title:'محادثة جديدة',msgs:[]};S.chats.unshift(c);S.cur=c.id}c.mode=S.mode;
   if(!redo){c.msgs.push({role:'user',content:text,files:pend});if(c.msgs.length===1)c.title=(text||pend[0]?.name||'مرفقات').slice(0,40);pend=[];tray()}
   const a={role:'assistant',content:''};c.msgs.push(a);save();draw();msgs.lastElementChild.classList.add('new','gen');if(!redo)msgs.lastElementChild.previousElementSibling?.classList.add('new');const el=msgs.lastElementChild.querySelector('.bub');el.innerHTML=statusHTML(S.searchOn?'search':'think');box.scrollTop=box.scrollHeight;$('#in').value='';fit();
-  ctrl=new AbortController();CLOUD_LOOP_GUARD={calls:0,tests:0,seen:new Map(),halt:'',failures:0,runtimeRevision:0};let TW=null;SEEN.clear();LAST.length=0;REWR.clear();MAPST.msg=null;MAPST.snap=null;CUR={c,a,su:0,ou:0};cpBegin();$('#go').classList.add('stop');
+  ctrl=new AbortController();CLOUD_LOOP_GUARD={calls:0,tests:0,seen:new Map(),halt:'',failures:0,runtimeRevision:0};AGENT_RUN=CODE()?newAgentRun():null;let TW=null;const VS={dirty:false,bad:false,n:0};SEEN.clear();LAST.length=0;REWR.clear();MAPST.msg=null;MAPST.snap=null;CUR={c,a,su:0,ou:0};cpBegin();$('#go').classList.add('stop');
   try{
     route(text,c);if(S.mode==='chat'&&!redo){try{await memoryAutoExtract(text)}catch(e){console.warn('auto-memory',e)}}MX.e=MX.cur=S.mode==='multi'?mres('e'):null;let messages=[{role:'system',content:sys()},...trimHist(c.msgs.slice(0,-1),c).map(api)];
     if(S.mode==='chat'){try{const memo=await memoryParts(text);if(memo.stable)messages.splice(1,0,{role:'system',content:memo.stable,_memoryStable:true});if(memo.dynamic)messages.splice(memo.stable?2:1,0,{role:'system',content:memo.dynamic})}catch(e){console.warn('memory context',e)}}
@@ -1543,15 +1546,16 @@ async function send(text,redo){
       }
       maTrace(a,'Executor','running','تنفيذ المهمة');setAgentStatus(el,'think')
     }
-    RD.clear();let tl=0,nudges=0;const VS={dirty:false,bad:false,n:0};
-    for(let turn=0;turn<(CODE()?14:(S.searchOn?8:5));turn++){if(CLOUD_LOOP_GUARD?.halt){a.content=CLOUD_LOOP_GUARD.halt;break}if(S.mode==='multi')await maPauseGate(a);
+    RD.clear();let tl=0,nudges=0;
+    for(let turn=0;turn<(CODE()?10:(S.searchOn?8:5));turn++){if(AGENT_RUN?.halt||CLOUD_LOOP_GUARD?.halt){a.stopReason=AGENT_RUN?.halt||CLOUD_LOOP_GUARD.halt;a.content=a.stopReason;break}if(S.mode==='multi')await maPauseGate(a);
       messages[0].content=sys();mapSync(messages);shrink(messages);compactActiveMessages(messages);
       if(S.mode==='multi'&&a.ma){const used=(a.reqs||[]).reduce((s,r)=>s+(Number(r.in)||Number(r.input)||0)+(Number(r.out)||Number(r.output)||0),0);if(used>=mcfg().budget){maTrace(a,'Budget','failed','تجاوزت المهمة ميزانية الـTokens المحددة');a.content='تم إيقاف المزيد من الاستدعاءات بعد تجاوز الميزانية التقديرية. يمكن رفع الحد من إعدادات Multi-Agent. جارٍ حفظ النتائج التي تمت.';break}}
       let started=false;a.content='';const ct=skel();TW?.kill();TW=mkTyper(ct,()=>a.content,()=>{if(near())box.scrollTop=box.scrollHeight});
       const m=await callModel(messages,true,true,chunk=>{if(!started){ct.innerHTML='';started=true}a.content+=chunk;el.classList.add('live');TW.kick()},calls=>{if(!started&&calls.some(c=>STREAMING.has(c.function.name)))ct.innerHTML='';const t=Date.now();if(t-tl<80)return;tl=t;actRun(el.querySelector('.acthost'),calls,turn);if(near())box.scrollTop=box.scrollHeight},XE());
       await TW.end();
-      if(LASTU){(a.reqs=a.reqs||[]).push(LASTU);save();orStats(LASTU,MX.cur?.p||prov());if(S.mode==='multi'&&a.ma)a.ma.usage.push({agent:'executor',...LASTU})}
+      if(LASTU){(a.reqs=a.reqs||[]).push(LASTU);save();if(S.mode==='multi'&&a.ma)a.ma.usage.push({agent:'executor',...LASTU})}
       if(m.tool_calls?.length){
+        const roundSnapshot=agentSnapshot();
         if(m.content&&m.content.trim())(a.notes=a.notes||[]).push(m.content.trim().slice(0,240));
         messages.push({role:'assistant',content:m.content||null,tool_calls:m.tool_calls});const PRQ=m.tool_calls.length>1&&m.tool_calls.every(c=>RO_TOOLS.has(c.function.name))?m.tool_calls.map(c=>runToolCall(c).then(v=>({v}),e=>({e}))):null;
         for(let i=0;i<m.tool_calls.length;i++){
@@ -1575,7 +1579,8 @@ async function send(text,redo){
           else{rec.ti=(a.todos||[]).findIndex(t=>t.status==='in_progress');(a.acts=a.acts||[]).push(rec);actDone(el.querySelector('.acthost'),rec,turn+'-'+i);refreshTodoActivity(a)}
           if(near())box.scrollTop=box.scrollHeight;
           await sleep(rec.n==='todo_write'?120:40)}
-        if(CLOUD_LOOP_GUARD?.halt){a.content=CLOUD_LOOP_GUARD.halt;ct.innerHTML=md(a.content);break}
+        if(AGENT_RUN){AGENT_RUN.stalled=roundSnapshot===agentSnapshot()?AGENT_RUN.stalled+1:0;if(AGENT_RUN.stalled>=AGENT_RUN.limits.stalled)try{agentStop(AGENT_RUN,'جولات متتابعة بدون تغيير في الملفات.')}catch{}if(turn===9&&!AGENT_RUN.halt)try{agentStop(AGENT_RUN,'وصل التنفيذ إلى حد الجولات.')}catch{}}
+        if(AGENT_RUN?.halt||CLOUD_LOOP_GUARD?.halt){a.stopReason=AGENT_RUN?.halt||CLOUD_LOOP_GUARD.halt;a.content=a.stopReason;ct.innerHTML=md(a.content);break}
         ct.innerHTML=(a.content?md(a.content):'')+statusHTML('think');
         continue;
       }
@@ -1583,24 +1588,26 @@ async function send(text,redo){
       if(CODE()&&enabledToolIds().includes('write_file')&&!(a.acts||[]).some(r=>r.ok&&MUT.has(r.n))){const cb=bigCode(m.content||'');
         if(cb&&nudges<1){nudges++;logDiag('agent','code in chat → nudge');messages.push({role:'assistant',content:m.content},{role:'user',content:'[النظام] لم تستخدم أدوات الملفات وكتبت الكود في الرد، وهذا ممنوع. استدعِ الآن write_file لإنشاء الملف بالكود كاملاً (أو read_file ثم edit_file إن كان التعديل على ملف موجود). لا تكتب أي نص آخر.'});FORCE='required';a.content='';ct.innerHTML=statusHTML('think');continue}
         if(cb){const r=await salvage(cb,el,a,turn);if(r){logDiag('agent','salvaged code to file',cb.path);a.content=r;break}}}
-      if(CODE()&&enabledToolIds().includes('verify_code')&&(VS.dirty||VS.bad)&&VS.n<4){VS.n++;if(VS.dirty){let vo=null;try{vo=await toolFn.verify_code({})}catch(e){logDiag('agent','auto verify failed',e.message)}
-if(vo){vTrack(VS,'verify_code',{},true,vo);const vr=mkRec('verify_code',{},true,vo);(a.tools=a.tools||[]).push({name:vr.n,ok:true,path:vr.p});(a.acts=a.acts||[]).push(vr);actDone(el.querySelector('.acthost'),vr,'av'+VS.n);
-if(vo.passed){logDiag('agent','auto verify passed');if((m.content||'').trim()){a.content=m.content;break}messages.push({role:'assistant',content:'(تم)'},{role:'user',content:'[النظام] اجتاز الفحص التلقائي. اكتب الرد النهائي الآن في سطرين دون استدعاء أدوات.'});a.content='';ct.innerHTML=statusHTML('think');continue}
+      if(CODE()&&enabledToolIds().includes('verify_code')&&(VS.dirty||VS.bad)&&VS.n<4){VS.n++;if(VS.dirty||VS.bad){let vo=null;try{vo=await verifyPending(VS)}catch(e){logDiag('agent','auto verify failed',e.message)}
+if(vo){const vr=mkRec('verify_code',{},true,vo);(a.tools=a.tools||[]).push({name:vr.n,ok:true,path:vr.p});(a.acts=a.acts||[]).push(vr);actDone(el.querySelector('.acthost'),vr,'av'+VS.n);
+if(vo.passed){VS.dirty=false;VS.bad=false;logDiag('agent','auto verify passed');if((m.content||'').trim()){a.content=m.content;break}messages.push({role:'assistant',content:'(تم)'},{role:'user',content:'[النظام] اجتاز الفحص التلقائي. اكتب الرد النهائي الآن في سطرين دون استدعاء أدوات.'});a.content='';ct.innerHTML=statusHTML('think');continue}
 messages.push({role:'assistant',content:m.content||'(تم)'},{role:'user',content:'[النظام] الفحص التلقائي لـ '+vo.path+' وجد أخطاء: '+JSON.stringify({errors:vo.errors,warnings:vo.warnings})+'\nأصلحها بـ edit_file ثم سلّم؛ يُعاد الفحص تلقائياً.'});FORCE='required';a.content='';ct.innerHTML=statusHTML('think');continue}}
 logDiag('agent','verify gate');messages.push({role:'assistant',content:m.content||'(تم)'},{role:'user',content:VS.dirty?'[النظام] عدّلتَ كوداً ولم تختبره. استدعِ verify_code الآن للفحص والتشغيل التجريبي قبل التسليم، ولا تكتب نصاً آخر.':'[النظام] آخر فحص وجد أخطاء ولم تُصلحها. أصلحها بـ edit_file ثم أعد verify_code حتى يمر الفحص.'});FORCE='required';a.content='';ct.innerHTML=statusHTML('think');continue}
+      if(VS.bad||VS.dirty){a.stopReason='لم يكتمل فحص الملفات أو إصلاح أخطائها بعد حد محاولات الفحص.';a.content=a.stopReason;break}
       a.content=m.content||a.content||'لم يصل رد من النموذج.';break;
     }
-  }catch(e){if(e.name!=='AbortError')a.content='تعذّر الاتصال: '+e.message}
+  }catch(e){if(e.name==='AgentLimitError'){a.stopReason=e.message;a.content=e.message}else if(e.name!=='AbortError')a.content='تعذّر الاتصال: '+e.message}
+  if(!a.content){a.stopReason='وصل التنفيذ لحد الجولات؛ راجع الملفات والنتائج قبل المتابعة.';a.content=a.stopReason}
   if(S.mode==='multi'&&a.ma){
-    maTrace(a,'Executor',ctrl?.signal.aborted?'failed':'done',ctrl?.signal.aborted?'تم الإيقاف':'اكتمل التنفيذ');
+    maTrace(a,'Executor',ctrl?.signal.aborted||a.stopReason?'failed':'done',ctrl?.signal.aborted||a.stopReason?'تم الإيقاف':'اكتمل التنفيذ');
     const result=maReview(a,VS);a.ma.review=result;
     if(mcfg().review){maTrace(a,'Local checks',result.ok?'done':'failed',result.ok?'اجتاز الفحوص المحلية':result.warnings.join(' · '));if(!result.ok&&a.content&&!ctrl?.signal.aborted)a.content+='\n\n**ملاحظات المراجعة:** '+result.warnings.join('؛ ')}
     // An additional independent, read-only model review is risk-gated to avoid paying for trivial edits.
-    if(!ctrl?.signal?.aborted&&mcfg().aiReview&&result.modified>0&&(a.ma.route==='full'||!result.ok)){
+    if(!AGENT_RUN?.halt&&!ctrl?.signal?.aborted&&mcfg().aiReview&&result.modified>0&&(a.ma.route==='full'||!result.ok)){
       const audit=await maIndependentAudit(a,text,'reviewer');a.ma.audit=audit;
       if(audit.report)a.content+='\n\n**مراجعة وكيل مستقل (استشارية):** '+audit.report;
     }
-    if(!ctrl?.signal?.aborted&&mcfg().securityReview&&result.modified>0&&maSecurityRisk(text,a)){
+    if(!AGENT_RUN?.halt&&!ctrl?.signal?.aborted&&mcfg().securityReview&&result.modified>0&&maSecurityRisk(text,a)){
       const audit=await maIndependentAudit(a,text,'security');a.ma.security=audit;
       if(audit.report)a.content+='\n\n**مراجعة الأمان (استشارية):** '+audit.report;
     }
@@ -1608,9 +1615,9 @@ logDiag('agent','verify gate');messages.push({role:'assistant',content:m.content
     a.ma.end=Date.now();MA_RUN.active=null;
   }
   TW?.kill();try{await cpEnd(a)}catch(e){logDiag('agent','cp failed',e.message)}
-  if(a.todos?.length&&a.content&&!/^(تعذّر الاتصال|خطأ|فشل|429:)/.test(a.content)&&!ctrl?.signal?.aborted&&(a.acts||[]).some(x=>x.ok&&MUT.has(x.n))&&a.todos.some(t=>t.status!=='done')){a.todos.forEach(t=>t.status='done');const cc=chat();if(cc)cc.todos=structuredClone(a.todos);paintTodo(el,a,null)}
+  if(!a.stopReason&&a.todos?.length&&a.content&&!/^(تعذّر الاتصال|خطأ|فشل|429:)/.test(a.content)&&!ctrl?.signal?.aborted&&(a.acts||[]).some(x=>x.ok&&MUT.has(x.n))&&a.todos.some(t=>t.status!=='done')){a.todos.forEach(t=>t.status='done');const cc=chat();if(cc)cc.todos=structuredClone(a.todos);paintTodo(el,a,null)}
   if(S.searchOn&&a.content){const have=new Set((a.sources||[]).map(x=>domainOf(x.url)));extractSources(a.content).forEach(x=>{const d=domainOf(x.url);if(!have.has(d)){have.add(d);(a.sources=a.sources||[]).push(x)}});if(a.sources?.length)delete a.searchNote}
-  MA_RUN.active=null;el.classList.remove('live');el.innerHTML=md(a.content||'تم إيقاف الرد.');ctrl=null;MX.cur=MX.e=null;$('#go').classList.remove('stop');save();draw();box.scrollTop=box.scrollHeight
+  MA_RUN.active=null;el.classList.remove('live');el.innerHTML=md(a.content||'تم إيقاف الرد.');ctrl=null;AGENT_RUN=null;MX.cur=MX.e=null;$('#go').classList.remove('stop');save();draw();box.scrollTop=box.scrollHeight
 }
 $('#go').onclick=()=>ctrl?ctrl.abort():send($('#in').value);$('#in').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&matchMedia('(hover:hover)').matches){e.preventDefault();send($('#in').value)}});const fit=()=>{syncGo();const t=$('#in');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,160)+'px'};$('#in').addEventListener('input',fit);
 msgs.addEventListener('click',async e=>{
@@ -1844,7 +1851,19 @@ const REJ='[لم يُحفظ هذا المحتوى (رُفض)؛ راجع رسال
 if(typeof j[k]==='string'&&j[k].length>600){j[k]=rw?REJ:sv(j[k],j.path);ch=true}
 if(n==='write_file'&&Array.isArray(j.files)){const bad=new Set((out?.files||[]).filter(x=>x&&x.error).map(x=>x.path));j.files.forEach(x=>{if(x&&typeof x.content==='string'&&x.content.length>600){x.content=(rw||bad.has(x.path))?REJ:sv(x.content,x.path);ch=true}})}
 if(ch)tc.function.arguments=JSON.stringify(j)}catch{}}
-function vTrack(V,n,args,ok,out){if(!ok)return;if((n==='write_file'||n==='edit_file'||n==='insert_lines')&&[args.path,...(Array.isArray(args.files)?args.files.map(x=>x&&x.path):[])].some(p=>/\.(html?|m?js|css|json|py)$/i.test(p||'')))V.dirty=true;else if(n==='verify_code'){V.dirty=false;V.bad=!out.passed}}
+function vTrack(V,n,args,ok,out){
+ if(!ok)return;V.pending=V.pending||new Set();V.failed=V.failed||new Set();
+ if(['write_file','edit_file','insert_lines'].includes(n)){
+  const rows=out?.files||[{path:out?.path||args.path,action:out?.action}];
+  for(const r of rows)if(!r.error&&r.action!=='unchanged'&&/\.(html?|[cm]?js|css|json|py)$/i.test(r.path||''))V.pending.add(r.path);
+ }else if(n==='verify_code'&&out?.path){V.pending.delete(out.path);if(out.passed)V.failed.delete(out.path);else V.failed.add(out.path)}
+ V.dirty=V.pending.size>0;V.bad=V.failed.size>0;
+}
+async function verifyPending(V){
+ const paths=[...new Set([...(V.pending||[]),...(V.failed||[])])],results=[];
+ for(const path of paths){try{const r=await toolFn.verify_code({path});vTrack(V,'verify_code',{path},true,r);results.push(r)}catch(e){results.push({path,passed:false,errors:[e.message]})}}
+ return {passed:results.every(r=>r.passed),path:paths.join(', '),errors:results.flatMap(r=>(r.errors||[]).map(e=>r.path+': '+e)),warnings:results.flatMap(r=>r.warnings||[])};
+}
 /* ===== USD cost accounting and user-configurable agent budget ===== */
 // Prices are editable USD / million tokens. Third-party routing fees, image/search charges,
 // long-context tiers and external tools may differ: do not present estimates as invoices.
@@ -1905,11 +1924,8 @@ function normUsage(c){const now=performance.now(),U=c.U,pd=U?.prompt_tokens_deta
   return{in:inp??null,out:U?(U.completion_tokens??U.output_tokens??null):null,cr:U?(pd.cached_tokens??U.cache_read_input_tokens??U.prompt_cache_hit_tokens??0):null,cw:U?(pd.cache_write_tokens??U.cache_creation_input_tokens??0):null,ttft:c.t1?c.t1-c.t0:null,gen:c.t1?Math.max(1,now-c.t1):null,ms:now-c.t0,nou:!U||inp==null,cost:U?(typeof U.cost==='number'&&(U.cost>0||!(U.cost_details?.upstream_inference_cost>0))?U.cost:(typeof U.cost_details?.upstream_inference_cost==='number'?U.cost_details.upstream_inference_cost:null)):null,gid:c.gid||null,api:U?.completion_time>0?{gen:U.completion_time*1000,tc:U.completion_tokens,src:'usage'}:null}}
 async function callModel(...a){const p=a[5]?.prov||prov(),model=a[5]?.model||p?.model;
  const reserved=costCheck(a[0],p,model);UCTX={t0:performance.now(),t1:0,U:null,gid:null};LASTU=null;
- try{return await _callModel(...a)}finally{costPendingUSD=Math.max(0,costPendingUSD-reserved);LASTU=normUsage(UCTX);LASTU.model=model;LASTU.provider=p?.url||'';LASTU.estimatedCost=costEstimate(LASTU,p,model);LASTU.costSource=LASTU.cost!=null?'provider':LASTU.estimatedCost!=null?'estimate':'unknown';}}
+ try{const result=await _callModel(...a);if(AGENT_RUN)AGENT_RUN.tokens+=Number(UCTX.U?.completion_tokens??UCTX.U?.output_tokens)||Math.ceil(JSON.stringify(result).length/3);return result}finally{costPendingUSD=Math.max(0,costPendingUSD-reserved);LASTU=normUsage(UCTX);LASTU.model=model;LASTU.provider=p?.url||'';LASTU.estimatedCost=costEstimate(LASTU,p,model);LASTU.costSource=LASTU.cost!=null?'provider':LASTU.estimatedCost!=null?'estimate':'unknown';}}
 function reqTps(r){const a=r.api;if(a&&a.gen>0){const t=a.tc??r.out;if(t!=null)return{v:t/(a.gen/1000),s:'api',t:t,ms:a.gen}}if(r.gen&&r.out!=null)return{v:r.out/(r.gen/1000),s:'cl',t:r.out,ms:r.gen};return null}
-function orStats(rec,p){if(!rec||!rec.gid||rec.api||!/openrouter\.ai/i.test(p?.url||''))return;
-  (async()=>{for(const d of [600,1600,3500,7000]){await new Promise(r=>setTimeout(r,d));try{const r=await fetch(base(p.url)+'/generation?id='+encodeURIComponent(rec.gid),{headers:{Authorization:'Bearer '+p.key}});
-    if(r.ok){const j=(await r.json()).data||{};if(j.generation_time>0){rec.api={gen:j.generation_time,tc:j.tokens_completion,lat:j.latency,src:'openrouter'};save();return}}else if(r.status!==404)return}catch{return}}})()}
 function usageStats(rs){const sum=k=>rs.reduce((a,r)=>a+(r[k]||0),0),g=rs.filter(r=>r.gen&&r.out!=null),gt=g.reduce((a,r)=>a+r.gen,0),tf=rs.filter(r=>r.ttft!=null),tp=rs.map(reqTps).filter(Boolean),la=rs.filter(r=>r.api&&r.api.lat>0);
   return{n:rs.length,inp:rs.some(r=>r.in!=null)?sum('in'):null,out:rs.some(r=>r.out!=null)?sum('out'):null,cr:sum('cr'),cw:sum('cw'),cost:rs.some(r=>costOf(r)!=null)?costSum(rs):null,nocost:rs.filter(r=>costOf(r)==null).length,tps:tp.length?(()=>{const T=tp.reduce((a,x)=>a+x.t,0),M=tp.reduce((a,x)=>a+x.ms,0);return M>0?T/(M/1000):null})():null,tsrc:tp.length?(tp.every(x=>x.s==='api')?'api':tp.every(x=>x.s==='cl')?'cl':'mix'):null,lat:la.length?la.reduce((a,r)=>a+r.api.lat,0)/la.length:null,ttft:tf.length?tf.reduce((a,r)=>a+r.ttft,0)/tf.length:null,total:sum('ms'),nou:rs.some(r=>r.nou)}}
 const fmtUSD=c=>c==null?'-':'$'+c.toFixed(c===0?2:c<0.01?5:c<1?4:2),fmtN=n=>n==null?'—':n>=1e4?(n/1e3).toFixed(1)+'k':Math.round(n).toLocaleString('en'),fmtMs=ms=>ms==null?'—':ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(2)+' s';
@@ -1997,8 +2013,28 @@ toolFn.run_code=async({path,test,timeout_s}={})=>{const ms=Math.min(60,Math.max(
 /* ---------- loop guard + project map ---------- */
 const RO_TOOLS=new Set(['read_file','search_files','list_files']);
 const MUT=new Set(['write_file','edit_file','insert_lines','delete_file','move_file']);
+// Per-user-request governor. Tool-name changes and no-op writes do not reset it.
+let AGENT_RUN=null;
+function newAgentRun(){return {requests:0,tools:0,tokens:0,stalled:0,errors:0,seen:new Map(),halt:'',limits:{requests:10,tools:32,tokens:100000,stalled:6}}}
+function agentStop(g,reason){if(!g.halt)g.halt='توقف تلقائي لتوفير الطلبات والتوكن: '+reason+' راجع النتائج الحالية؛ لم يُفترض اكتمال المهمة.';const e=Error(g.halt);e.name='AgentLimitError';throw e}
+function agentRequest(g,body){if(!g)return;if(g.halt)agentStop(g,g.halt);const tokens=Math.ceil(new TextEncoder().encode(JSON.stringify(body)).length/3);if(g.requests>=g.limits.requests)agentStop(g,'وصل الطلب إلى حد '+g.limits.requests+' اتصالات بالموديل.');if(g.tokens+tokens>g.limits.tokens)agentStop(g,'وصل الطلب إلى ميزانية التوكن التقديرية.');g.requests++;g.tokens+=tokens}
+function stableArgs(raw){try{const sort=x=>Array.isArray(x)?x.map(sort):x&&typeof x==='object'?Object.fromEntries(Object.keys(x).sort().map(k=>[k,sort(x[k])])):x;return JSON.stringify(sort(JSON.parse(raw||'{}')))}catch{return String(raw)}}
+function agentSnapshot(){return JSON.stringify([...FSC.values()].filter(vis).map(f=>[f.path,f.content]).sort((a,b)=>a[0].localeCompare(b[0])))}
 const _run=runToolCall;
-runToolCall=async function(tc){const sig=tc.function.name+'|'+(tc.function.arguments||'');if(LAST.length>=2&&LAST.slice(-2).every(x=>x===sig))throw Error('تكرار نفس الاستدعاء 3 مرات بلا تقدم؛ غيّر الطريقة (اقرأ الملف مجدداً أو عدّل old_string أو اسأل المستخدم).');LAST.push(sig);if(LAST.length>6)LAST.shift();const r=await _run(tc);if(MUT.has(tc.function.name))LAST.length=0;return r};
+runToolCall=async function(tc){
+ const g=AGENT_RUN;if(!g)return _run(tc);
+ if(g.halt)agentStop(g,g.halt);
+ if(g.tools>=g.limits.tools)agentStop(g,'وصل الطلب إلى حد استدعاءات الأدوات.');
+ const before=agentSnapshot(),sig=tc.function.name+'|'+stableArgs(tc.function.arguments)+'|'+h32(before)+':'+before.length;
+ if((g.seen.get(sig)||0)>=2)agentStop(g,'تكررت نفس الأداة على نفس الملفات بدون تقدم.');
+ g.seen.set(sig,(g.seen.get(sig)||0)+1);g.tools++;
+ try{const result=await _run(tc);
+  const failed=!!(result?.error||result?.ok===false||result?.passed===false||result?.exitCode>0);
+  g.errors=failed?g.errors+1:0;
+  if(g.errors>=3)agentStop(g,'فشلت 3 عمليات متتالية.');
+  return result;
+ }catch(e){if(e.name==='AgentLimitError')throw e;g.errors++;if(g.errors>=3)agentStop(g,'فشلت 3 عمليات متتالية.');throw e}
+};
 /* ===== Harness vNext: durable task state + safe orchestrated reads + optional Chromium ===== */
 const TASK_PHASES=new Set(['planned','in_progress','blocked','completed','failed']);
 const TASK_MAX_BYTES=40000;
@@ -2034,7 +2070,7 @@ toolFn.tool_batch=async a=>{
  for(const c of calls)if(!c||!BATCH_SAFE.has(c.tool)||!toolFn[c.tool]||S.toolOff[c.tool]||!enabledToolIds().includes(c.tool)||c.args!=null&&(typeof c.args!=='object'||Array.isArray(c.args)))throw Error('عملية غير مسموحة في دفعة القراءة');
  const results=[];for(let i=0;i<calls.length;i++){
   if(ctrl?.signal?.aborted)throw new DOMException('Stopped','AbortError');const c=calls[i];
-  try{const output=await toolFn[c.tool](c.args||{}),raw=JSON.stringify(output);results.push({index:i,tool:c.tool,ok:!output?.error,result:raw.length>max?raw.slice(0,max):output,truncated:raw.length>max,originalChars:raw.length})}
+  try{const output=await runToolCall({function:{name:c.tool,arguments:JSON.stringify(c.args||{})}}),raw=JSON.stringify(output);results.push({index:i,tool:c.tool,ok:!output?.error,result:raw.length>max?raw.slice(0,max):output,truncated:raw.length>max,originalChars:raw.length})}
   catch(e){results.push({index:i,tool:c.tool,ok:false,error:String(e.message).slice(0,300)})}
  }
  return {results,count:results.length,policy:'read-only, sequential, bounded; truncated outputs are incomplete evidence'};
@@ -2861,7 +2897,7 @@ toolFn.programmatic_tools=async a=>{
  const url=URL.createObjectURL(new Blob([source],{type:'text/javascript'})),worker=new Worker(url);URL.revokeObjectURL(url);
  return await new Promise(resolve=>{let calls=0,finished=false,chain=Promise.resolve();const finish=v=>{if(finished)return;finished=true;clearTimeout(timer);ctrl?.signal?.removeEventListener('abort',abort);worker.terminate();resolve(v)};const abort=()=>finish({error:'تم إيقاف تنفيذ الدفعة'});const timer=setTimeout(()=>finish({error:'انتهت مهلة تنفيذ JavaScript (20 ثانية)'}),20000);ctrl?.signal?.addEventListener('abort',abort,{once:true});
  worker.onmessage=e=>{const m=e.data||{};if(m.type==='done'||m.type==='error'){if(m.type==='error')return finish({error:String(m.error).slice(0,400),calls});let raw;try{raw=JSON.stringify(m.value)}catch{raw='null'}if(raw===undefined)raw='null';return finish({result:raw.length>max?raw.slice(0,max):m.value,truncated:raw.length>max,originalChars:raw.length,calls})}
- if(m.type!=='call')return;chain=chain.then(async()=>{if(finished)return;const id=m.id,name=m.name,args=m.args;let ok=false,value,error='';try{if(++calls>20)throw Error('تجاوز الحد الأقصى: 20 استدعاء');if(!PROGRAM_READ.has(name)||!enabledToolIds().includes(name)||!toolFn[name])throw Error('هذه الأداة غير مصرح بها ضمن التنفيذ البرمجي');if(!args||typeof args!=='object'||Array.isArray(args)||JSON.stringify(args).length>4000)throw Error('وسائط غير صالحة');value=await toolFn[name](args);const raw=JSON.stringify(value);if(raw.length>100000)throw Error('نتيجة الأداة كبيرة؛ استخدم نطاقات أو بحث أكثر تحديداً');ok=true}catch(ex){error=String(ex.message||ex).slice(0,400)}if(!finished)worker.postMessage({type:'result',id,ok,value:ok?value:null,error})}).catch(ex=>finish({error:String(ex),calls}));};worker.onerror=e=>finish({error:'Worker JavaScript: '+String(e.message).slice(0,300),calls});worker.postMessage({type:'start',code});});
+ if(m.type!=='call')return;chain=chain.then(async()=>{if(finished)return;const id=m.id,name=m.name,args=m.args;let ok=false,value,error='';try{if(++calls>20)throw Error('تجاوز الحد الأقصى: 20 استدعاء');if(!PROGRAM_READ.has(name)||!enabledToolIds().includes(name)||!toolFn[name])throw Error('هذه الأداة غير مصرح بها ضمن التنفيذ البرمجي');if(!args||typeof args!=='object'||Array.isArray(args)||JSON.stringify(args).length>4000)throw Error('وسائط غير صالحة');value=await runToolCall({function:{name,arguments:JSON.stringify(args)}});const raw=JSON.stringify(value);if(raw.length>100000)throw Error('نتيجة الأداة كبيرة؛ استخدم نطاقات أو بحث أكثر تحديداً');ok=true}catch(ex){error=String(ex.message||ex).slice(0,400)}if(!finished)worker.postMessage({type:'result',id,ok,value:ok?value:null,error})}).catch(ex=>finish({error:String(ex),calls}));};worker.onerror=e=>finish({error:'Worker JavaScript: '+String(e.message).slice(0,300),calls});worker.postMessage({type:'start',code});});
 };
 TOOL_META.push({id:'tool_search',name:'البحث عن الأدوات',desc:'تحميل تعريفات الأدوات عند الحاجة بما فيها MCP'},{id:'programmatic_tools',name:'تنفيذ أدوات عبر JS',desc:'حلقة JavaScript آمنة للقراءة مع نتيجة مختصرة',code:1});
 // User can disable lazy loading without changing any existing tools / MCP settings.
